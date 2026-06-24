@@ -239,7 +239,7 @@ class ReviewerAgent(BaseAgent):
                 "concept": concept,
                 "profile_hash": self._make_debate_cache_key(concept, profile).split(":", 1)[1],
                 "report": report.model_dump_json(),
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             }, ["cache_key"])
         finally:
             db.conn.close()

@@ -30,12 +30,15 @@ TODO:
 - [已完成] 同步聊天、资源生成接口已实现
 - [已完成] 异步 SSE 流式资源生成已实现
 - [已完成] 简单异常降级（_safe_run）已实现
-- [待完成] 实现真正的超时熔断（当前仅有异常捕获）
+- [已完成] 实现真正的 10 秒超时熔断与降级（含熔断器）
 - [待完成] handle_chat_stream 目前仅包装同步 handle_chat，未来拆分为多步骤 thinking 事件
 - [待完成] 接入更准确的 LLM 意图分类，替代关键词匹配
 """
 import asyncio
+import concurrent.futures
 import re
+import threading
+import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from app.agents.base import AgentMessage, BaseAgent
@@ -46,6 +49,67 @@ from app.agents.reviewer import ReviewerAgent
 from app.models.schemas import AgentResponse
 
 
+# 全局线程池：用于给同步 agent.run 增加超时控制
+_AGENT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=8, thread_name_prefix="agent_run"
+)
+
+
+class _CircuitBreaker:
+    """基于失败次数与冷却期的进程内熔断器。
+
+    规则：
+    - 60 秒内同一 Agent 失败/超时达到 3 次，熔断器打开，120 秒内直接降级；
+    - 冷却期结束或有一次成功调用后，熔断器关闭。
+    """
+
+    FAILURE_THRESHOLD = 3
+    WINDOW_SECONDS = 60
+    COOLDOWN_SECONDS = 120
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state: Dict[str, Dict[str, Any]] = {}
+
+    def is_open(self, name: str) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            rec = self._state.setdefault(
+                name, {"state": "closed", "failures": [], "opened_at": 0.0}
+            )
+            if rec["state"] == "open":
+                if now - rec["opened_at"] >= self.COOLDOWN_SECONDS:
+                    rec["state"] = "closed"
+                    rec["failures"].clear()
+                    return False
+                return True
+
+            cutoff = now - self.WINDOW_SECONDS
+            rec["failures"] = [t for t in rec["failures"] if t > cutoff]
+            if len(rec["failures"]) >= self.FAILURE_THRESHOLD:
+                rec["state"] = "open"
+                rec["opened_at"] = now
+                return True
+            return False
+
+    def record_success(self, name: str) -> None:
+        with self._lock:
+            rec = self._state.setdefault(
+                name, {"state": "closed", "failures": [], "opened_at": 0.0}
+            )
+            rec["failures"].clear()
+            if rec["state"] == "open":
+                rec["state"] = "closed"
+
+    def record_failure(self, name: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            rec = self._state.setdefault(
+                name, {"state": "closed", "failures": [], "opened_at": 0.0}
+            )
+            rec["failures"].append(now)
+
+
 class AgentOrchestrator:
     """Agent 编排器"""
 
@@ -54,6 +118,7 @@ class AgentOrchestrator:
         self.navigator = NavigatorAgent()
         self.generator = GeneratorAgent()
         self.reviewer = ReviewerAgent()
+        self._circuit_breaker = _CircuitBreaker()
 
     @staticmethod
     def _to_dict(obj: Any) -> Any:
@@ -156,16 +221,22 @@ class AgentOrchestrator:
         # 1. 路径规划：调用 Navigator 获取学习路径
         async for e in emit("navigator", f"正在规划「{concept}」的学习路径..."):
             yield e
-        nav_msg = await asyncio.to_thread(self.navigator.run, msg.with_stage("navigator"))
-        path = nav_msg.payload.get("path", [concept])
+        nav_result = await self._safe_run_async(self.navigator, msg.with_stage("navigator"))
+        if nav_result.payload.get("fallback"):
+            yield {"type": "error", "message": nav_result.payload.get("error", "路径规划失败")}
+            return
+        path = nav_result.payload.get("path", [concept])
         async for e in emit("navigator", f"学习路径：{' → '.join(path)}"):
             yield e
 
         # 2. 资源生成：调用 Generator 生成教学资源包
         async for e in emit("builder", f"正在为「{concept}」生成个性化教学资源..."):
             yield e
-        gen_msg = await asyncio.to_thread(self.generator.run, msg.with_stage("generator"))
-        package = gen_msg.payload.get("package", {})
+        gen_result = await self._safe_run_async(self.generator, msg.with_stage("generator"))
+        if gen_result.payload.get("fallback"):
+            yield {"type": "error", "message": gen_result.payload.get("error", "资源生成失败")}
+            return
+        package = gen_result.payload.get("package", {})
         async for e in emit(
             "builder",
             f"教学资源生成完成，包含 {len(package.get('document', ''))} 字讲解文档。",
@@ -182,7 +253,10 @@ class AgentOrchestrator:
             context=context,
             from_agent="generator",
         )
-        review_result = await asyncio.to_thread(self.reviewer.run, review_msg)
+        review_result = await self._safe_run_async(self.reviewer, review_msg)
+        if review_result.payload.get("fallback"):
+            yield {"type": "error", "message": review_result.payload.get("error", "辩论审核失败")}
+            return
         debate_report = review_result.payload.get("debate_report", {})
         validation = review_result.payload.get("validation", {})
         review_mode = review_result.payload.get("review_mode", "full")
@@ -351,17 +425,67 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
     # 工具方法
     # ------------------------------------------------------------------
-    def _safe_run(self, agent: BaseAgent, msg: AgentMessage) -> AgentMessage:
-        """带异常熔断的 Agent 调用（当前为简单降级，尚未实现超时）"""
+    def _safe_run(self, agent: BaseAgent, msg: AgentMessage, timeout: float = 10.0) -> AgentMessage:
+        """带超时与熔断的同步 Agent 调用"""
+        breaker = self._circuit_breaker
+        if breaker.is_open(agent.name):
+            return self._fallback_message(agent, msg, reason="circuit_open")
+
         try:
-            return agent.run(msg)
+            future = _AGENT_EXECUTOR.submit(agent.run, msg)
+            result = future.result(timeout=timeout)
+            breaker.record_success(agent.name)
+            return result
+        except TimeoutError:
+            breaker.record_failure(agent.name)
+            return self._fallback_message(agent, msg, reason="timeout")
         except Exception as e:
-            # 降级：返回错误信息，不影响主流程继续执行
-            return msg.reply(
-                {"error": f"{agent.name} 执行失败: {str(e)}", "fallback": True},
-                stage=msg.stage,
-                from_agent=agent.name,
+            breaker.record_failure(agent.name)
+            return self._fallback_message(agent, msg, reason="exception", error=str(e))
+
+    async def _safe_run_async(
+        self, agent: BaseAgent, msg: AgentMessage, timeout: float = 10.0
+    ) -> AgentMessage:
+        """带超时与熔断的异步 Agent 调用"""
+        breaker = self._circuit_breaker
+        if breaker.is_open(agent.name):
+            return self._fallback_message(agent, msg, reason="circuit_open")
+
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(agent.run, msg), timeout=timeout
             )
+            breaker.record_success(agent.name)
+            return result
+        except TimeoutError:
+            breaker.record_failure(agent.name)
+            return self._fallback_message(agent, msg, reason="timeout")
+        except Exception as e:
+            breaker.record_failure(agent.name)
+            return self._fallback_message(agent, msg, reason="exception", error=str(e))
+
+    def _fallback_message(
+        self,
+        agent: BaseAgent,
+        msg: AgentMessage,
+        reason: str,
+        error: str = "",
+    ) -> AgentMessage:
+        """构造统一降级响应"""
+        reason_text = {
+            "circuit_open": "服务暂时不可用，已熔断",
+            "timeout": "执行超时（>10s），已降级",
+            "exception": f"执行失败: {error}",
+        }.get(reason, "已降级")
+        return msg.reply(
+            {
+                "error": f"{agent.name} {reason_text}",
+                "fallback": True,
+                "reason": reason,
+            },
+            stage=msg.stage,
+            from_agent=agent.name,
+        )
 
     def _session_to_context(self, session: dict) -> Dict[str, Any]:
         """将 session 转为 AgentMessage context"""

@@ -17,11 +17,12 @@ TODO:
 - [已完成] Python 代码执行与结果返回已实现
 - [已完成] 代码提交历史与错误模式持久化已实现
 - [已完成] 学习行为日志记录已实现
+- [已完成] 错误率超阈值自动触发知识熔炉资源重审
 - [待完成] 接入 Docker 沙箱，支持第三方库并增强隔离性
 - [待完成] 接入 Pyodide 后端执行选项
 - [待完成] judge-exercise 接口需真正与会话练习记录联动
 """
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel
 
 import uuid
@@ -31,6 +32,7 @@ from app.services.database import (
     create_code_submission,
     log_event,
 )
+from app.services.knowledge_furnace import trigger_resource_review
 
 router = APIRouter()
 
@@ -78,12 +80,17 @@ async def execute_code(payload: ExecuteRequest, request: Request):
 
 
 @router.post("/judge")
-async def judge_code(payload: JudgeRequest, request: Request):
+async def judge_code(
+    payload: JudgeRequest,
+    request: Request,
+    background_tasks: BackgroundTasks = None,
+):
     """判题：执行代码并对比期望输出"""
     executor = CodeExecutor()
     result = executor.judge(payload.code, payload.expected_output)
 
     session_id = payload.session_id or "anonymous"
+    concept = payload.concept or ""
     error_type = "passed" if result.get("passed") else result.get("error_type", "logic")
 
     # 持久化判题提交记录
@@ -91,7 +98,7 @@ async def judge_code(payload: JudgeRequest, request: Request):
         submission_id=str(uuid.uuid4()),
         session_id=session_id,
         exercise_id="",
-        concept=payload.concept or "",
+        concept=concept,
         code=payload.code,
         output=result.get("actual_output", ""),
         passed=result.get("passed", False),
@@ -101,23 +108,39 @@ async def judge_code(payload: JudgeRequest, request: Request):
 
     # 记录练习提交事件
     log_event(session_id, "exercise_submitted", {
-        "concept": payload.concept,
+        "concept": concept,
         "code": payload.code,
         "expected_output": payload.expected_output,
         "passed": result.get("passed"),
         "actual_output": result.get("actual_output"),
     })
 
-    return result
+    # 错误率过高时后台触发知识熔炉资源重审
+    triggered = False
+    if concept and result.get("passed") is False:
+        if background_tasks is not None:
+            background_tasks.add_task(trigger_resource_review, concept, "error_rate")
+            triggered = True
+
+    return {
+        **result,
+        "knowledge_furnace_triggered": triggered,
+        "concept": concept,
+    }
 
 
 @router.post("/judge-exercise")
-async def judge_exercise(payload: JudgeRequest, request: Request):
+async def judge_exercise(
+    payload: JudgeRequest,
+    request: Request,
+    background_tasks: BackgroundTasks = None,
+):
     """判题并更新会话中的练习记录"""
     executor = CodeExecutor()
     result = executor.judge(payload.code, payload.expected_output)
 
     session_id = payload.session_id or "anonymous"
+    concept = payload.concept or ""
     error_type = "passed" if result.get("passed") else result.get("error_type", "logic")
 
     # 持久化代码提交记录
@@ -125,7 +148,7 @@ async def judge_exercise(payload: JudgeRequest, request: Request):
         submission_id=str(uuid.uuid4()),
         session_id=session_id,
         exercise_id="",
-        concept=payload.concept or "",
+        concept=concept,
         code=payload.code,
         output=result.get("actual_output", ""),
         passed=result.get("passed", False),
@@ -135,11 +158,22 @@ async def judge_exercise(payload: JudgeRequest, request: Request):
 
     # 记录练习提交事件
     log_event(session_id, "exercise_submitted", {
-        "concept": payload.concept,
+        "concept": concept,
         "code": payload.code,
         "expected_output": payload.expected_output,
         "passed": result.get("passed"),
         "actual_output": result.get("actual_output"),
     })
 
-    return result
+    # 错误率过高时后台触发知识熔炉资源重审
+    triggered = False
+    if concept and result.get("passed") is False:
+        if background_tasks is not None:
+            background_tasks.add_task(trigger_resource_review, concept, "error_rate")
+            triggered = True
+
+    return {
+        **result,
+        "knowledge_furnace_triggered": triggered,
+        "concept": concept,
+    }

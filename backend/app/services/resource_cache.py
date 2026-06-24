@@ -36,7 +36,7 @@ def _db():
 
 
 def _now() -> str:
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _ensure_table():

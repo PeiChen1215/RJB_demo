@@ -24,7 +24,8 @@ TODO:
 - [已完成] 生成结果持久化到 resource / debate_record 表已实现
 - [待完成] 接入 Redis 缓存已辩论通过的资源，避免重复调用 LLM
 - [待完成] 生成真正的 TTS 音频文件并返回 URL
-- [待完成] 增加生成超时熔断与重试机制
+- [已完成] 生成超时熔断与降级已由 Orchestrator 统一处理
+- [待完成] 增加生成重试机制
 - [待完成] 支持批量生成多个知识点的学习资源
 """
 import json
@@ -304,6 +305,16 @@ async def stream_generate_resource(session_id: str, concept: str, request: Reque
                 "success": final_result is not None,
                 "task_id": task_id,
             })
+
+            # 如果流程因 Agent 降级/超时中断，把任务标记为失败
+            if final_result is None:
+                update_generation_task(
+                    task_id,
+                    status="failed",
+                    progress=0,
+                    stage_message="生成中断：Agent 超时或降级",
+                    error_message="Agent 调用超时/熔断，未拿到完整结果",
+                )
 
     return StreamingResponse(
         event_generator(),

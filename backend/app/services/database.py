@@ -21,6 +21,7 @@ TODO:
 - [已完成] 会话、用户、事件、资源生成任务、资源、版本、辩论记录、代码提交、
   掌握度、认知证据、资源反馈等表的初始化与 CRUD。
 - [已完成] 基于 sqlite_utils 的索引创建。
+- [已完成] 跨会话查找最新资源，支持知识熔炉自动重审。
 - [待完成] 迁移到 PostgreSQL，以支持高并发与复杂查询。
 - [待完成] 增加用户表与认证流程的完整集成（当前 user 表仅做基础存储）。
 - [待完成] 增加更多复合索引优化高频查询（session+concept、event_type+created_at 等）。
@@ -28,7 +29,7 @@ TODO:
 import json
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlite_utils import Database
@@ -222,7 +223,7 @@ def init_db(db: Database):
 
 
 def _now() -> str:
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def create_user(username: str, hashed_password: str):
@@ -560,6 +561,19 @@ def find_resource_by_concept(session_id: str, concept: str, status: Optional[str
             " AND ".join(f"{k} = ?" for k in where),
             list(where.values())
         ))
+        if not rows:
+            return None
+        latest = max(rows, key=lambda r: r["version"])
+        return get_resource(latest["resource_id"])
+    finally:
+        db.conn.close()
+
+
+def find_latest_resource_by_concept(concept: str) -> Optional[dict]:
+    """跨会话按知识点查找最新资源（知识熔炉用）"""
+    db = get_db()
+    try:
+        rows = list(db["resource"].rows_where("concept = ?", [concept]))
         if not rows:
             return None
         latest = max(rows, key=lambda r: r["version"])
