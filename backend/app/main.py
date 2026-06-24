@@ -101,11 +101,11 @@ async def health_detail():
         session_count = len(list(db["sessions"].rows))
         user_count = len(list(db["users"].rows))
         event_count = len(list(db["learning_events"].rows))
-        resource_count = len(list(db["resources"].rows)) if "resources" in db.table_names() else 0
-        task_count = len(list(db["generation_tasks"].rows)) if "generation_tasks" in db.table_names() else 0
-        debate_count = len(list(db["debate_records"].rows)) if "debate_records" in db.table_names() else 0
-        submission_count = len(list(db["code_submissions"].rows)) if "code_submissions" in db.table_names() else 0
-        version_count = len(list(db["resource_versions"].rows)) if "resource_versions" in db.table_names() else 0
+        resource_count = len(list(db["resource"].rows)) if "resource" in db.table_names() else 0
+        task_count = len(list(db["generation_task"].rows)) if "generation_task" in db.table_names() else 0
+        debate_count = len(list(db["debate_record"].rows)) if "debate_record" in db.table_names() else 0
+        submission_count = len(list(db["code_submission"].rows)) if "code_submission" in db.table_names() else 0
+        version_count = len(list(db["resource_version"].rows)) if "resource_version" in db.table_names() else 0
         cache_count = get_cache_stats()["total"]
     finally:
         db.conn.close()

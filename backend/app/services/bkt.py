@@ -168,9 +168,13 @@ class BKTTracker:
 
         优先从 mastery_state 表读取已持久化的掌握度，
         再读取 learning_events 中的 exercise_submitted 事件作为补充。
+        每次加载前清空当前模型，避免不同会话之间状态串扰。
         """
+        self.models.clear()
+
         # 优先从 mastery_state 恢复
         states = get_mastery_state(session_id)
+        states_concepts = {s["concept"] for s in states}
         for s in states:
             model = self.get_or_create_model(s["concept"])
             model.probability = s["p_known"]
@@ -183,8 +187,8 @@ class BKTTracker:
             if isinstance(payload, str):
                 payload = json.loads(payload)
             concept = event.get("concept") or payload.get("_concept") or payload.get("concept")
-            passed = payload.get("passed") or payload.get("is_correct")
-            if concept and passed is not None and concept not in {s["concept"] for s in states}:
+            passed = payload.get("passed") if payload.get("passed") is not None else payload.get("is_correct")
+            if concept and passed is not None and concept not in states_concepts:
                 self.record_observation(concept, bool(passed))
 
         # 从 code_submissions 中加载
@@ -195,7 +199,7 @@ class BKTTracker:
                 passed = sub["passed"]
             else:
                 passed = sub.get("output") == sub.get("expected_output")
-            if concept and passed is not None and concept not in {s["concept"] for s in states}:
+            if concept and passed is not None and concept not in states_concepts:
                 self.record_observation(concept, bool(passed))
 
     def persist_to_session(self, session_id: str):
@@ -227,19 +231,15 @@ class BKTTracker:
         }
 
 
-# 全局单例
-_tracker: Optional[BKTTracker] = None
-
-
 def get_bkt_tracker() -> BKTTracker:
-    """获取全局 BKT 追踪器"""
-    global _tracker
-    if _tracker is None:
-        _tracker = BKTTracker()
-    return _tracker
+    """创建一个新的 BKT 追踪器实例
+
+    每个请求/会话独立实例，避免跨会话状态串扰。
+    如需按 session_id 缓存，可在此加入 LRU 缓存逻辑。
+    """
+    return BKTTracker()
 
 
 def reset_bkt_tracker():
-    """重置 BKT 追踪器（主要用于测试）"""
-    global _tracker
-    _tracker = None
+    """重置 BKT 追踪器（保留以兼容旧调用，当前无全局单例可重置）"""
+    pass

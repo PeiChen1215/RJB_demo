@@ -913,8 +913,8 @@ def save_resource_version(resource_id: str, version: int, document: str, mindmap
         db.conn.close()
 
 
-def get_resource_versions(resource_id: str) -> List[dict]:
-    """获取资源的所有版本"""
+def get_resource_versions_by_id(resource_id: str) -> List[dict]:
+    """获取某个资源 ID 的所有版本（按 resource_id 查询）"""
     db = get_db()
     try:
         rows = list(db["resource_version"].rows_where(

@@ -91,6 +91,9 @@ async def analyze_mastery(
     tracker = get_bkt_tracker()
     tracker.load_from_session(session_id)
 
+    # 将重新计算后的 BKT 状态持久化到 mastery_state 表
+    tracker.persist_to_session(session_id)
+
     heatmap_data = tracker.get_heatmap_data()
 
     # 找出薄弱知识点（掌握概率 < 0.6）
