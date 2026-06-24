@@ -1,4 +1,15 @@
-"""辩论议会诊断脚本：打印每个 Agent 的原始回复"""
+"""辩论议会诊断脚本：打印每个 Agent 的原始回复
+
+用于本地调试辩论议会各审核视角的原始输出，帮助定位 prompt 与解析问题。
+
+TODO:
+- [已完成] 调用 GeneratorAgent 生成资源包
+- [已完成] 分别打印 Expert/Teacher/Student/Guardian 原始回复
+- [已完成] 输出 DebateCouncil 汇总投票与轮次
+- [待完成] 支持命令行参数指定 concept 与 profile
+- [待完成] 将诊断结果导出为结构化 JSON/日志文件
+- [待完成] 增加 prompt 版本对比与 token 消耗统计
+"""
 import os
 import sys
 

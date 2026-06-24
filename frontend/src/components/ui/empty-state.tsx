@@ -1,3 +1,16 @@
+/**
+ * EmptyState 空状态组件
+ *
+ * 用于列表、页面等内容为空时展示友好提示，支持图标、标题、描述与操作区。
+ *
+ * TODO:
+ * - [已完成] 支持图标、标题、描述与自定义操作
+ * - [已完成] 提供 indigo/violet/emerald/amber 四种主题色
+ * - [已完成] 集成 framer-motion 入场动画
+ * - [待完成] 添加可访问性属性与语义化结构
+ * - [待完成] 支持插画/图片作为空状态视觉
+ * - [待完成] 补充单元测试
+ */
 import { motion } from 'framer-motion'
 import * as React from 'react'
 

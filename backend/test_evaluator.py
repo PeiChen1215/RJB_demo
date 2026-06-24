@@ -1,4 +1,14 @@
-"""Evaluator Agent 与学习事件链路测试"""
+"""Evaluator Agent 与学习事件链路测试
+
+验证学习事件提交后，Evaluator Agent 能否正确统计并更新学生画像。
+
+TODO:
+- [已完成] 提交 exercise_submitted 与 code_executed 事件
+- [已完成] 调用 /evaluate 并验证统计与更新后画像
+- [待完成] 补充错误/无效事件 payload 的容错测试
+- [待完成] 验证画像更新公式与边界条件
+- [待完成] 补充多事件聚合与历史回溯测试
+"""
 import os
 
 os.environ.setdefault("DEEPSEEK_API_KEY", os.getenv("DEEPSEEK_API_KEY", "sk-PLACEHOLDER"))

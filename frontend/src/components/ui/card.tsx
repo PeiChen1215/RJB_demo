@@ -1,3 +1,16 @@
+/**
+ * Card 卡片组件
+ *
+ * 提供 Card、CardHeader、CardTitle、CardDescription、CardContent、CardFooter
+ * 等原子组件，用于构建内容分组面板。
+ *
+ * TODO:
+ * - [已完成] 实现 Card 及其子组件
+ * - [已完成] 支持 ref 转发与 className 覆盖
+ * - [待完成] 增加可交互状态（hover、focus）样式变体
+ * - [待完成] 支持 clickable/card 作为链接/按钮使用
+ * - [待完成] 补充单元测试与 Storybook 示例
+ */
 import * as React from 'react'
 
 import { cn } from '@/lib/utils'

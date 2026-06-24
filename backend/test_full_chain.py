@@ -5,6 +5,13 @@
 运行方式：
     cd backend
     .\\venv\\Scripts\\python.exe test_full_chain.py
+
+TODO:
+- [已完成] 覆盖 health/graph/session/chat/generate-resource 全流程
+- [已完成] 使用 DeepSeek + memory graph 组合运行
+- [待完成] 增加资源包内容质量断言
+- [待完成] 补充异常分支与超时处理验证
+- [待完成] 将完整链路接入 CI 夜间回归
 """
 import os
 import sys

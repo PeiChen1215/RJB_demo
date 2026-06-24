@@ -13,6 +13,14 @@
 运行方式：
     cd backend
     .\\venv\\Scripts\\python.exe test_ablation.py
+
+TODO:
+- [已完成] 对比 mock 与 deepseek 两种 LLM provider
+- [已完成] 收集 health/chat/generate/debate/validation 多维指标
+- [已完成] 输出表格化消融结果并保存 JSON 报告
+- [待完成] 增加 Neo4j 图存储配置的消融对比
+- [待完成] 引入统计显著性分析与多次采样平均
+- [待完成] 将消融结果可视化并生成图表
 """
 import os
 import sqlite3

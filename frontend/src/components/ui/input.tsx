@@ -1,3 +1,15 @@
+/**
+ * Input 输入框组件
+ *
+ * 基础表单输入框，统一圆角、聚焦态与禁用态样式。
+ *
+ * TODO:
+ * - [已完成] 实现基础文本输入样式
+ * - [已完成] 支持 ref 转发与 className 覆盖
+ * - [待完成] 集成 Label、ErrorMessage、Hint 等表单辅助组件
+ * - [待完成] 支持前缀/后缀图标
+ * - [待完成] 补充单元测试
+ */
 import * as React from 'react'
 
 import { cn } from '@/lib/utils'

@@ -1,4 +1,14 @@
-"""资源缓存测试"""
+"""资源缓存测试
+
+验证资源生成缓存的命中逻辑与 TTL 过期行为。
+
+TODO:
+- [已完成] 验证同一 session+concept 二次生成命中缓存
+- [已完成] 验证缓存 TTL 过期后失效
+- [待完成] 补充并发场景下缓存一致性测试
+- [待完成] 补充缓存淘汰/清理策略测试
+- [待完成] 验证不同 profile 生成不同缓存 key
+"""
 import os
 
 os.environ.setdefault("DEEPSEEK_API_KEY", os.getenv("DEEPSEEK_API_KEY", "sk-PLACEHOLDER"))

@@ -1,3 +1,16 @@
+/**
+ * Button 按钮组件
+ *
+ * 基于 class-variance-authority 与 Radix Slot 的多变体按钮，支持 asChild 透传。
+ *
+ * TODO:
+ * - [已完成] 实现 default/destructive/outline/secondary/ghost/link 变体
+ * - [已完成] 支持 sm/default/lg/icon 尺寸
+ * - [已完成] 支持 asChild 与 ref 转发
+ * - [待完成] 添加加载状态与 Loading 图标
+ * - [待完成] 完善 focus/keyboard 无障碍支持
+ * - [待完成] 补充单元测试与 Storybook 示例
+ */
 import { Slot } from '@radix-ui/react-slot'
 import { cva, type VariantProps } from 'class-variance-authority'
 import * as React from 'react'

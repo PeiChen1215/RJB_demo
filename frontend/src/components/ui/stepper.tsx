@@ -1,3 +1,15 @@
+/**
+ * Stepper 步骤条组件
+ *
+ * 展示多步骤流程进度，支持已完成、进行中、待完成三种节点状态。
+ *
+ * TODO:
+ * - [已完成] 实现步骤节点、进度条与状态图标
+ * - [已完成] 集成 framer-motion 进度动画
+ * - [待完成] 支持点击切换/导航步骤
+ * - [待完成] 支持垂直布局与错误状态
+ * - [待完成] 补充单元测试
+ */
 import { Check, Loader2 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import * as React from 'react'

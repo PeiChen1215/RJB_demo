@@ -1,3 +1,15 @@
+/**
+ * Badge 徽章组件
+ *
+ * 基于 class-variance-authority 提供多种视觉变体的轻量标签组件。
+ *
+ * TODO:
+ * - [已完成] 实现 default/secondary/destructive/outline 四种变体
+ * - [已完成] 支持 className 覆盖
+ * - [待完成] 添加可访问性属性（aria-label、role）
+ * - [待完成] 支持图标前缀与可关闭按钮
+ * - [待完成] 补充单元测试与 Storybook 示例
+ */
 import { cva, type VariantProps } from 'class-variance-authority'
 import * as React from 'react'
 

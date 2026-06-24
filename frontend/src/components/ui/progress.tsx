@@ -1,3 +1,15 @@
+/**
+ * Progress 进度条组件
+ *
+ * 基于 Radix UI Progress 的可访问进度指示器。
+ *
+ * TODO:
+ * - [已完成] 基于 @radix-ui/react-progress 实现
+ * - [已完成] 支持 value 与 className
+ * - [待完成] 支持缓冲/不确定进度状态
+ * - [待完成] 支持多种尺寸与颜色变体
+ * - [待完成] 补充单元测试
+ */
 import * as React from "react"
 import * as ProgressPrimitive from "@radix-ui/react-progress"
 

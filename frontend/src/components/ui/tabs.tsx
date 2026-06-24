@@ -1,3 +1,15 @@
+/**
+ * Tabs 标签页组件
+ *
+ * 基于 Radix UI Tabs 封装的可访问标签页组件。
+ *
+ * TODO:
+ * - [已完成] 基于 @radix-ui/react-tabs 实现 Tabs/List/Trigger/Content
+ * - [已完成] 支持 className 覆盖与 ref 转发
+ * - [待完成] 支持图标标签、徽标与禁用态
+ * - [待完成] 支持懒加载/卸载隐藏内容
+ * - [待完成] 补充单元测试
+ */
 import * as React from "react"
 import * as TabsPrimitive from "@radix-ui/react-tabs"
 

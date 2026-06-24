@@ -1,3 +1,16 @@
+/**
+ * GlassCard 玻璃态卡片组件
+ *
+ * 带有毛玻璃、微动效与可选发光效果的展示型卡片。
+ *
+ * TODO:
+ * - [已完成] 实现毛玻璃背景与入场动画
+ * - [已完成] 支持 hover 上浮与 glow 光晕
+ * - [已完成] 支持自定义 delay 与 className
+ * - [待完成] 支持点击/链接形态
+ * - [待完成] 适配深色模式
+ * - [待完成] 补充单元测试
+ */
 import { motion } from 'framer-motion'
 import * as React from 'react'
 

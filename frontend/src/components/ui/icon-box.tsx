@@ -1,3 +1,15 @@
+/**
+ * IconBox 图标盒子组件
+ *
+ * 带有渐变背景与统一尺寸的图标容器，用于卡片、列表、空状态等场景。
+ *
+ * TODO:
+ * - [已完成] 实现 indigo/violet/emerald/amber/rose/cyan 六种主题
+ * - [已完成] 支持 sm/md/lg 三种尺寸
+ * - [已完成] 支持 ref 转发与 className 覆盖
+ * - [待完成] 支持透明/outlined 等轻量变体
+ * - [待完成] 补充单元测试
+ */
 import * as React from 'react'
 
 import { cn } from '@/lib/utils'

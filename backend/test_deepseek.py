@@ -5,6 +5,13 @@
     python test_deepseek.py
 
 pytest 执行时，如果未配置有效 DeepSeek API Key 或接口不可用，会自动跳过。
+
+TODO:
+- [已完成] 验证非流式与流式 achat 接口
+- [已完成] 缺少有效 API Key 时自动 skip
+- [待完成] 补充模型温度、max_tokens 等参数边界测试
+- [待完成] 补充重试、超时与错误码处理测试
+- [待完成] 接入 mock 切换以支持离线回归
 """
 import asyncio
 import sys

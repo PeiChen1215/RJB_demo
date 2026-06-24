@@ -3,6 +3,13 @@
 运行方式：
     cd backend
     .\\venv\\Scripts\\python.exe test_sse.py
+
+TODO:
+- [已完成] 创建会话并订阅资源生成 SSE 流
+- [已完成] 解析 progress/complete/error 三类事件
+- [待完成] 验证事件顺序与字段完整性
+- [待完成] 增加客户端断连后服务端处理测试
+- [待完成] 补充并发订阅与压力测试
 """
 import json
 import os

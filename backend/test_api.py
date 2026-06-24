@@ -1,4 +1,15 @@
-"""快速验证后端 API"""
+"""快速验证后端 API
+
+通过 FastAPI TestClient 对核心接口做冒烟测试，覆盖健康检查、知识图谱、
+会话、对话与资源生成等关键路径。
+
+TODO:
+- [已完成] 验证 /health、/api/graph/、/api/sessions/、/chat、/resources/generate-for-session
+- [已完成] 使用 memory 图存储与 mock LLM 保证测试稳定
+- [待完成] 补充异常路径与参数校验用例
+- [待完成] 增加资源包内容结构与字段断言
+- [待完成] 接入 pytest fixture 实现数据库隔离
+"""
 import os
 
 import pytest
