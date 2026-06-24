@@ -42,6 +42,7 @@ from app.agents.reviewer import ReviewerAgent
 from app.agents.orchestrator import AgentOrchestrator
 from app.models.schemas import (
     AgentResponse,
+    BehaviorEventRequest,
     ChatRequest,
     EventLogRequest,
     SessionCreate,
@@ -247,17 +248,17 @@ async def log_session_event(
     if not session:
         return {"success": False, "error": "会话不存在"}
 
-    log_event(session_id, payload.event_type, payload.payload)
+    log_event(session_id, payload.event_type, payload.payload, concept=payload.concept)
 
     # 如果是练习提交或代码运行且结果正确，实时更新画像中的掌握知识点
     profile = session.get("profile", get_default_profile().model_dump())
     mastered = set(profile.get("mastered_concepts", []))
     if payload.event_type == "exercise_submitted" and payload.payload.get("is_correct"):
-        concept = payload.payload.get("concept")
+        concept = payload.concept or payload.payload.get("concept")
         if concept:
             mastered.add(concept)
     elif payload.event_type == "code_executed" and payload.payload.get("passed"):
-        concept = payload.payload.get("concept")
+        concept = payload.concept or payload.payload.get("concept")
         if concept:
             mastered.add(concept)
     profile["mastered_concepts"] = list(mastered)
@@ -265,6 +266,30 @@ async def log_session_event(
     _save_session(request.app, session)
 
     return {"success": True, "event_type": payload.event_type}
+
+
+@router.post("/{session_id}/behavior")
+async def log_behavior_event(
+    session_id: str,
+    payload: BehaviorEventRequest,
+    request: Request,
+):
+    """记录前端行为埋点事件（点击导图、停留时长、展开提示等）
+
+    用于认知风格证据收集，前端只需在交互点调用此接口即可。
+    """
+    session = _load_session(request.app, session_id)
+    if not session:
+        return {"success": False, "error": "会话不存在"}
+
+    log_event(
+        session_id,
+        payload.event_type.value,
+        payload.payload,
+        concept=payload.concept,
+    )
+
+    return {"success": True, "event_type": payload.event_type.value}
 
 
 @router.post("/{session_id}/chat", response_model=AgentResponse)

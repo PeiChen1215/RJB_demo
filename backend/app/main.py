@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, code, graph, resources, sessions
+from app.api import auth, code, evaluation, graph, resources, sessions
 from app.core.config import get_settings
 from app.middleware.logging import RequestLoggingMiddleware, setup_logging
 from app.services.database import get_db
@@ -81,6 +81,7 @@ app.include_router(sessions.router, prefix="/api/sessions", tags=["学习会话"
 app.include_router(resources.router, prefix="/api/resources", tags=["资源生成"])
 app.include_router(graph.router, prefix="/api/graph", tags=["知识图谱"])
 app.include_router(code.router, prefix="/api/code", tags=["代码执行与判题"])
+app.include_router(evaluation.router, prefix="/api/evaluation", tags=["学习评估"])
 
 
 @app.get("/health")
@@ -100,6 +101,11 @@ async def health_detail():
         session_count = len(list(db["sessions"].rows))
         user_count = len(list(db["users"].rows))
         event_count = len(list(db["learning_events"].rows))
+        resource_count = len(list(db["resource"].rows)) if "resource" in db.table_names() else 0
+        task_count = len(list(db["generation_task"].rows)) if "generation_task" in db.table_names() else 0
+        debate_count = len(list(db["debate_record"].rows)) if "debate_record" in db.table_names() else 0
+        submission_count = len(list(db["code_submission"].rows)) if "code_submission" in db.table_names() else 0
+        version_count = len(list(db["resource_version"].rows)) if "resource_version" in db.table_names() else 0
         cache_count = get_cache_stats()["total"]
     finally:
         db.conn.close()
@@ -112,6 +118,18 @@ async def health_detail():
         "service": "eduhive-backend",
         "llm_provider": settings.LLM_PROVIDER,
         "graph_backend": settings.GRAPH_BACKEND,
+        "database_stats": {
+            "sessions": session_count,
+            "users": user_count,
+            "events": event_count,
+            "resources": resource_count,
+            "generation_tasks": task_count,
+            "debate_records": debate_count,
+            "code_submissions": submission_count,
+            "resource_versions": version_count,
+            "cache_entries": cache_count,
+            "graph_concepts": concepts,
+        },
         "database": {
             "sessions": session_count,
             "users": user_count,

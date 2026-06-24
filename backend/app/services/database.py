@@ -304,38 +304,56 @@ def update_session(session_id: str, profile: dict, dialogue_history: list, targe
         db.conn.close()
 
 
-def log_event(session_id: str, event_type: str, payload: Dict[str, Any]):
-    """记录学习行为事件"""
+def log_event(session_id: str, event_type: str, payload: Dict[str, Any], concept: Optional[str] = None):
+    """记录学习行为事件
+
+    Args:
+        session_id: 会话 ID
+        event_type: 事件类型
+        payload: 事件载荷
+        concept: 关联知识点（存入 payload 中，向后兼容）
+    """
+    full_payload = dict(payload)
+    if concept:
+        full_payload["_concept"] = concept
     db = get_db()
     try:
         db["learning_events"].insert({
             "session_id": session_id,
             "event_type": event_type,
-            "payload": json.dumps(payload, ensure_ascii=False),
+            "payload": json.dumps(full_payload, ensure_ascii=False),
             "created_at": _now(),
         })
     finally:
         db.conn.close()
 
 
-def get_session_events(session_id: str, event_type: Optional[str] = None) -> List[dict]:
+def get_session_events(session_id: str, event_type: Optional[str] = None, concept: Optional[str] = None) -> List[dict]:
     db = get_db()
     try:
         table = db["learning_events"]
-        where = {"session_id": session_id}
+        conditions = ["session_id = ?"]
+        params = [session_id]
         if event_type:
-            where["event_type"] = event_type
-        rows = table.rows_where(" AND ".join(f"{k} = ?" for k in where), list(where.values()))
-        return [
-            {
+            conditions.append("event_type = ?")
+            params.append(event_type)
+        rows = table.rows_where(" AND ".join(conditions), params)
+        results = []
+        for r in rows:
+            payload = json.loads(r["payload"])
+            if concept:
+                # concept 存在 payload._concept 中，这里做过滤
+                if payload.get("_concept") != concept:
+                    continue
+            results.append({
                 "id": r["id"],
                 "session_id": r["session_id"],
                 "event_type": r["event_type"],
-                "payload": json.loads(r["payload"]),
+                "concept": payload.get("_concept", ""),
+                "payload": payload,
                 "created_at": r["created_at"],
-            }
-            for r in rows
-        ]
+            })
+        return results
     finally:
         db.conn.close()
 
@@ -863,3 +881,131 @@ def get_resource_feedback_stats(concept: str) -> Dict[str, Any]:
         }
     finally:
         db.conn.close()
+
+
+# =============================================================================
+# 新增：资源版本操作（知识熔炉）
+# =============================================================================
+
+def save_resource_version(resource_id: str, version: int, document: str, mindmap: str,
+                          exercises: list, code_cases: list, change_reason: Optional[str] = None,
+                          concept: Optional[str] = None, triggered_by: Optional[str] = None) -> int:
+    """保存资源的新版本"""
+    db = get_db()
+    try:
+        table = db["resource_version"]
+        table.insert({
+            "resource_id": resource_id,
+            "concept": concept or "",
+            "version": version,
+            "change_reason": change_reason or "",
+            "triggered_by": triggered_by or "",
+            "content_snapshot": json.dumps({
+                "document": document,
+                "mindmap": mindmap,
+                "exercises": exercises,
+                "code_cases": code_cases,
+            }, ensure_ascii=False),
+            "created_at": _now(),
+        })
+        return table.last_pk
+    finally:
+        db.conn.close()
+
+
+def get_resource_versions_by_id(resource_id: str) -> List[dict]:
+    """获取某个资源 ID 的所有版本（按 resource_id 查询）"""
+    db = get_db()
+    try:
+        rows = list(db["resource_version"].rows_where(
+            "resource_id = ?", [resource_id], order_by="version ASC"
+        ))
+        result = []
+        for r in rows:
+            snapshot = json.loads(r["content_snapshot"]) if r["content_snapshot"] else {}
+            result.append({
+                "version_id": r["version_id"],
+                "resource_id": r["resource_id"],
+                "concept": r["concept"],
+                "version": r["version"],
+                "change_reason": r["change_reason"],
+                "triggered_by": r["triggered_by"],
+                "document": snapshot.get("document", ""),
+                "mindmap": snapshot.get("mindmap", ""),
+                "exercises": snapshot.get("exercises", []),
+                "code_cases": snapshot.get("code_cases", []),
+                "created_at": r["created_at"],
+            })
+        return result
+    finally:
+        db.conn.close()
+
+
+# =============================================================================
+# 新增：全局错误统计（知识熔炉用）
+# =============================================================================
+
+def get_global_error_stats(concept: Optional[str] = None) -> Dict[str, Any]:
+    """获取全局提交错误率统计"""
+    db = get_db()
+    try:
+        if concept:
+            rows = list(db["code_submission"].rows_where(
+                "concept = ? AND passed IS NOT NULL", [concept]
+            ))
+        else:
+            rows = list(db["code_submission"].rows_where("passed IS NOT NULL"))
+
+        total = len(rows)
+        passed = sum(1 for r in rows if r["passed"])
+        return {
+            "total_submissions": total,
+            "passed": passed,
+            "failed": total - passed,
+            "error_rate": (total - passed) / total if total > 0 else 0.0,
+        }
+    finally:
+        db.conn.close()
+
+
+# =============================================================================
+# 新增：前端行为埋点 - cognitive_profile_evidence 快捷操作
+# =============================================================================
+
+def log_behavior_event(session_id: str, event_type: str, dimension: Optional[str] = None,
+                       concept: Optional[str] = None, weight: float = 1.0,
+                       description: Optional[str] = None):
+    """记录前端行为事件到 learning_events 并自动生成认知风格证据
+
+    前端只需调用 POST /{session_id}/behavior 接口，此函数负责：
+    1. 记录原始事件到 learning_events
+    2. 根据事件类型自动推断认知维度并写入 cognitive_profile_evidence
+    """
+    # 1. 记录原始事件
+    log_event(session_id, event_type, {
+        "concept": concept or "",
+        "weight": weight,
+        "description": description or "",
+    }, concept=concept)
+
+    # 2. 映射事件类型到认知维度
+    dimension_map = {
+        "mindmap_clicked": "cognitive_modality",
+        "code_executed": "cognitive_modality",
+        "hint_expanded": "cognitive_field",
+        "page_stay": "learning_pace",
+        "resource_switched": "cognitive_modality",
+        "profile_viewed": "goal_orientation",
+        "path_viewed": "goal_orientation",
+        "audio_played": "cognitive_modality",
+        "exercise_attempt": "cognitive_field",
+    }
+    dim = dimension or dimension_map.get(event_type)
+    if dim:
+        add_cognitive_evidence(
+            session_id=session_id,
+            dimension=dim,
+            evidence_type=event_type,
+            weight=weight,
+            description=description or f"用户触发了 {event_type} 事件",
+        )

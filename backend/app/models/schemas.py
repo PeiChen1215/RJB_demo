@@ -20,11 +20,39 @@ TODO:
 - [待完成] 增加共享的自定义校验器与错误提示信息。
 - [待完成] 拆分单文件为按业务模块组织的多个 schema 文件，提升可维护性。
 """
+from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
+
+# ═══════════════════════════════════════════════════════════════
+#  行为事件类型枚举
+# ═══════════════════════════════════════════════════════════════
+
+class BehaviorEventType(str, Enum):
+    """前端埋点行为事件类型"""
+    CHAT = "chat"
+    RESOURCE_GENERATED = "resource_generated"
+    EXERCISE_SUBMITTED = "exercise_submitted"
+    CODE_EXECUTED = "code_executed"
+    MINDMAP_CLICKED = "mindmap_clicked"           # 点击导图节点
+    HINT_EXPANDED = "hint_expanded"               # 展开提示
+    RESOURCE_SWITCHED = "resource_switched"       # 切换资源类型
+    PAGE_STAY = "page_stay"                       # 页面停留
+    PROFILE_VIEWED = "profile_viewed"              # 查看画像
+    PATH_VIEWED = "path_viewed"                    # 查看学习路径
+    DEBATE_VIEWED = "debate_viewed"                # 查看辩论报告
+    EXERCISE_ATTEMPT = "exercise_attempt"          # 尝试答题
+    CODE_CASE_VIEWED = "code_case_viewed"          # 查看代码案例
+    AUDIO_PLAYED = "audio_played"                  # 播放音频
+    HELP_REQUESTED = "help_requested"              # 请求帮助
+
+
+# ═══════════════════════════════════════════════════════════════
+#  基础模型
+# ═══════════════════════════════════════════════════════════════
 
 class ChatMessage(BaseModel):
     role: str = Field(..., description="消息角色: user/assistant/system")
@@ -61,8 +89,24 @@ class ChatRequest(BaseModel):
 
 class EventLogRequest(BaseModel):
     event_type: str  # exercise_submitted / code_executed / resource_generated / chat
+    concept: Optional[str] = Field(None, description="关联知识点")
     payload: Dict[str, Any] = Field(default_factory=dict)
 
+
+class BehaviorEventRequest(BaseModel):
+    """前端行为埋点请求"""
+    event_type: BehaviorEventType
+    concept: Optional[str] = Field(None, description="关联知识点")
+    session_id: str = Field(..., description="会话 ID")
+    payload: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="事件载荷，不同事件类型包含不同字段",
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+#  资源与辩论模型
+# ═══════════════════════════════════════════════════════════════
 
 class ResourceType(BaseModel):
     type: str  # document / mindmap / exercise / code_case / audio
@@ -99,6 +143,10 @@ class AgentResponse(BaseModel):
     profile_update: Optional[Dict] = None
     debate_report: Optional[DebateReport] = None
 
+
+# ═══════════════════════════════════════════════════════════════
+#  图谱模型
+# ═══════════════════════════════════════════════════════════════
 
 class GraphNode(BaseModel):
     id: str
