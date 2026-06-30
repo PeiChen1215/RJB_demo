@@ -425,7 +425,7 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
     # 工具方法
     # ------------------------------------------------------------------
-    def _safe_run(self, agent: BaseAgent, msg: AgentMessage, timeout: float = 10.0) -> AgentMessage:
+    def _safe_run(self, agent: BaseAgent, msg: AgentMessage, timeout: float = 30.0) -> AgentMessage:
         """带超时与熔断的同步 Agent 调用"""
         breaker = self._circuit_breaker
         if breaker.is_open(agent.name):
@@ -444,7 +444,7 @@ class AgentOrchestrator:
             return self._fallback_message(agent, msg, reason="exception", error=str(e))
 
     async def _safe_run_async(
-        self, agent: BaseAgent, msg: AgentMessage, timeout: float = 10.0
+        self, agent: BaseAgent, msg: AgentMessage, timeout: float = 30.0
     ) -> AgentMessage:
         """带超时与熔断的异步 Agent 调用"""
         breaker = self._circuit_breaker
@@ -474,7 +474,7 @@ class AgentOrchestrator:
         """构造统一降级响应"""
         reason_text = {
             "circuit_open": "服务暂时不可用，已熔断",
-            "timeout": "执行超时（>10s），已降级",
+            "timeout": "执行超时（>30s），已降级",
             "exception": f"执行失败: {error}",
         }.get(reason, "已降级")
         return msg.reply(

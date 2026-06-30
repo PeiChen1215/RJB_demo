@@ -96,7 +96,12 @@ class ReviewerAgent(BaseAgent):
         cached = self._get_cached_debate(concept, profile)
         if cached:
             return message.reply(
-                {"debate_report": cached, "from_cache": True},
+                {
+                    "debate_report": cached.model_dump(),
+                    "validation": {"forbidden_concepts": [], "ast_violations": []},
+                    "review_mode": "fast",
+                    "from_cache": True,
+                },
                 stage="reviewer",
                 from_agent=self.name,
             )

@@ -42,6 +42,7 @@ from app.services.database import (
     create_generation_task,
     create_resource,
     create_session,
+    find_latest_generation_task_by_concept,
     get_resource_versions,
     get_session,
     log_event,
@@ -333,3 +334,31 @@ async def get_resource_version_history(concept: str):
     """获取某知识点的资源版本演进历史（知识熔炉展示用）"""
     versions = get_resource_versions(concept)
     return {"concept": concept, "versions": versions}
+
+
+_DEFAULT_THINKING_STEPS = [
+    {"agent": "Navigator", "stage": "navigator", "message": "正在规划「{concept}」的学习路径...", "icon": "map"},
+    {"agent": "Generator", "stage": "builder", "message": "正在为「{concept}」生成个性化教学资源...", "icon": "sparkles"},
+    {"agent": "Reviewer", "stage": "debate", "message": "正在提交辩论议会审核...", "icon": "scale"},
+    {"agent": "System", "stage": "complete", "message": "资源生成流程全部完成。", "icon": "check"},
+]
+
+
+@router.get("/thinking-path")
+async def get_thinking_path(concept: str):
+    """获取某知识点的生成过程回放步骤（思考路径）"""
+    task = find_latest_generation_task_by_concept(concept)
+    if task:
+        status = task.get("status") or "pending"
+        steps = [
+            {"agent": "Navigator", "stage": "navigator", "message": f"正在规划「{concept}」的学习路径...", "icon": "map"},
+            {"agent": "Generator", "stage": "builder", "message": f"正在为「{concept}」生成个性化教学资源...", "icon": "sparkles"},
+            {"agent": "Reviewer", "stage": "debate", "message": task.get("stage_message") or "正在提交辩论议会审核...", "icon": "scale"},
+            {"agent": "System", "stage": "complete", "message": "资源生成流程全部完成。" if status == "completed" else f"当前状态：{status}", "icon": "check"},
+        ]
+    else:
+        steps = [
+            {**step, "message": step["message"].format(concept=concept)}
+            for step in _DEFAULT_THINKING_STEPS
+        ]
+    return {"concept": concept, "steps": steps}

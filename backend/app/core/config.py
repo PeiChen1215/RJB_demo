@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # DeepSeek 配置
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
-    DEEPSEEK_MODEL: str = "deepseek-chat"
+    DEEPSEEK_MODEL: str = "deepseek-v4-flash"
 
     # LLM 提供者：deepseek / spark / mock / auto
     LLM_PROVIDER: str = "auto"

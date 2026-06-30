@@ -121,15 +121,15 @@ function App() {
     if (activeTab === 'chat') {
       return session ? <ChatPanel session={session} /> : <PanelSkeleton />
     }
+    if (activeTab === 'progress') {
+      return <MasteryHeatmap sessionId={session?.session_id} />
+    }
     return (
       <Suspense fallback={<PanelSkeleton />}>
         {activeTab === 'graph' && <KnowledgeGraph />}
         {activeTab === 'sandbox' && <PyodideSandbox />}
       </Suspense>
     )
-    if (activeTab === 'progress') {
-      return <MasteryHeatmap sessionId={session?.session_id} />
-    }
   }
 
   return (

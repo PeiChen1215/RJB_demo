@@ -23,7 +23,7 @@ TODO:
 - [待完成] judge-exercise 接口需真正与会话练习记录联动
 """
 from fastapi import APIRouter, BackgroundTasks, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import uuid
 
@@ -46,6 +46,12 @@ class JudgeRequest(BaseModel):
     expected_output: str
     session_id: str | None = None
     concept: str | None = None
+
+
+class SeedFailedSubmissionsRequest(BaseModel):
+    session_id: str
+    concept: str
+    count: int = Field(default=5, ge=1, le=100)
 
 
 @router.post("/execute")
@@ -127,6 +133,24 @@ async def judge_code(
         "knowledge_furnace_triggered": triggered,
         "concept": concept,
     }
+
+
+@router.post("/seed-failed-submissions")
+async def seed_failed_submissions(payload: SeedFailedSubmissionsRequest):
+    """快速插入指定数量的失败代码提交（演示/测试用）"""
+    for _ in range(payload.count):
+        create_code_submission(
+            submission_id=str(uuid.uuid4()),
+            session_id=payload.session_id,
+            exercise_id="",
+            concept=payload.concept,
+            code="# seed failed submission",
+            output="",
+            passed=False,
+            error_type="logic",
+            execution_time=0.0,
+        )
+    return {"created": payload.count}
 
 
 @router.post("/judge-exercise")

@@ -274,7 +274,10 @@ def create_session(session_id: str, user_id: str, profile: dict, target_concept:
 def get_session(session_id: str) -> Optional[dict]:
     db = get_db()
     try:
-        row = db["sessions"].get(session_id)
+        try:
+            row = db["sessions"].get(session_id)
+        except Exception:
+            return None
         if not row:
             return None
         return {
@@ -457,6 +460,30 @@ def get_generation_task(task_id: str) -> Optional[dict]:
         }
     except Exception:
         return None
+    finally:
+        db.conn.close()
+
+
+def find_latest_generation_task_by_concept(concept: str) -> Optional[dict]:
+    """查找某知识点的最新生成任务（按 updated_at 倒序）"""
+    db = get_db()
+    try:
+        rows = list(db["generation_task"].rows_where("concept = ?", [concept]))
+        if not rows:
+            return None
+        latest = max(rows, key=lambda r: r["updated_at"])
+        return {
+            "task_id": latest["task_id"],
+            "session_id": latest["session_id"],
+            "concept": latest["concept"],
+            "status": latest["status"],
+            "progress": latest["progress"],
+            "stage_message": latest["stage_message"],
+            "result": json.loads(latest["result"]) if latest["result"] else {},
+            "error_message": latest["error_message"],
+            "created_at": latest["created_at"],
+            "updated_at": latest["updated_at"],
+        }
     finally:
         db.conn.close()
 

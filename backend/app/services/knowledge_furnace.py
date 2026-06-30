@@ -19,6 +19,7 @@ TODO:
 - [待完成] 接入资源反馈（confusion_marked、rating）作为辅助触发信号
 - [待完成] 增加重审任务队列，避免多个提交同时触发多次重审
 """
+import os
 import uuid
 from typing import Any, Dict, Optional, Tuple
 
@@ -32,8 +33,8 @@ from app.services.database import (
     update_generation_task,
 )
 
-ERROR_RATE_THRESHOLD = 0.6
-MIN_SUBMISSIONS = 5
+ERROR_RATE_THRESHOLD = float(os.environ.get("FURNACE_ERROR_RATE_THRESHOLD", "0.6"))
+MIN_SUBMISSIONS = int(os.environ.get("FURNACE_MIN_SUBMISSIONS", "5"))
 
 
 def should_trigger_resource_review(concept: str) -> Tuple[bool, Dict[str, Any]]:

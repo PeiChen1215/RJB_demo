@@ -68,8 +68,8 @@ def test_should_not_trigger_when_error_rate_low():
 
 def test_trigger_resource_review_creates_version():
     """触发重审后应生成新版本并记录演进"""
-    # 使用新概念，避免受之前测试数据影响
-    concept = "知识熔炉测试_版本演进"
+    # 使用唯一概念，避免多次运行或历史数据导致版本号累加
+    concept = f"知识熔炉测试_版本演进_{uuid.uuid4().hex[:8]}"
     _seed_failed_submissions(concept, MIN_SUBMISSIONS)
 
     mock_package = {

@@ -46,7 +46,7 @@ class DeepSeekLLM:
     """DeepSeek 大模型封装"""
 
     # 默认使用 DeepSeek-V3， reasoning 任务可换 deepseek-reasoner
-    DEFAULT_MODEL = "deepseek-chat"
+    DEFAULT_MODEL = "deepseek-v4-flash"
 
     def __init__(self, model: str | None = None):
         settings = get_settings()

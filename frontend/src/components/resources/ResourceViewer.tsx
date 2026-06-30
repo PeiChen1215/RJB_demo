@@ -3,8 +3,8 @@
  * 功能：
  *   - 接收知识点，调用后端多智能体流式生成资源包（讲义/导图/练习/代码案例）；
  *   - 分阶段展示生成进度（构建/校验/辩论/完成）；
- *   - 以标签页形式展示文档、思维导图、练习题、辩论审核报告；
- *   - 支持代码案例与练习题一键运行到沙箱、自动判题。
+ *   - 以标签页形式展示文档、思维导图、练习题、辩论审核报告、思维路径与版本历史；
+ *   - 支持代码案例与练习题一键运行到沙箱、自动判题、变量可视化。
  * 主要 props：
  *   - sessionId：当前会话 ID，资源生成需要绑定会话。
  * 主要 hooks/函数：
@@ -14,9 +14,12 @@
  *   - mermaid 渲染：将后端返回的导图文本渲染为 SVG。
  * TODO:
  *  - [已完成] 流式资源生成与进度展示
- *  - [已完成] 文档/导图/练习/审核四标签页
+ *  - [已完成] 文档/导图/练习/审核/思维路径/版本六标签页
  *  - [已完成] 练习自动判题与沙箱运行
  *  - [已完成] 认知风格（视觉/听觉/动觉）差异化渲染
+ *  - [已完成] 变量可视化（C10）
+ *  - [已完成] 可解释思维路径回放（C9）
+ *  - [已完成] 知识熔炉版本时间线（C11）
  *  - [待完成] 辩论报告可视化增强（投票分布/修改对比）
  *  - [待完成] 资源收藏、历史记录与分享
  */
@@ -40,6 +43,10 @@ import {
   Sparkles,
   Copy,
   Check,
+  History,
+  Workflow,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -50,6 +57,9 @@ import { Progress } from '@/components/ui/progress'
 import { Stepper } from '@/components/ui/stepper'
 import { EmptyState } from '@/components/ui/empty-state'
 import { CognitiveStylePanel, type CognitiveStyle } from '@/components/resources/CognitiveStyleRenderer'
+import { FurnaceTimeline } from '@/components/resources/FurnaceTimeline'
+import { ThinkingPathReplay } from '@/components/resources/ThinkingPathReplay'
+import { VariableVisualizer } from '@/components/resources/VariableVisualizer'
 import api, { behaviorApi, codeApi, resourceApi } from '@/services/api'
 import { useSandboxStore } from '@/stores/sandboxStore'
 import { cn } from '@/lib/utils'
@@ -144,6 +154,7 @@ export function ResourceViewer({ sessionId }: Props) {
 
   const [judgeResults, setJudgeResults] = useState<Record<number, { loading: boolean; result?: any }>>({})
   const [exerciseCodes, setExerciseCodes] = useState<Record<number, string>>({})
+  const [showVariableViz, setShowVariableViz] = useState<Record<string, boolean>>({})
 
   const activeStageIndex = STAGES.findIndex((s) => s.key === currentStage)
 
@@ -195,22 +206,33 @@ export function ResourceViewer({ sessionId }: Props) {
             setResource(finalResource)
             setProgressValue(100)
           } else if (event.type === 'error') {
-            throw new Error(event.message || '生成失败')
+            setProgressMessage(`流式生成遇到问题：${event.message || '未知错误'}，尝试同步兜底...`)
+            break
           }
         }
       }
 
       // 流式接口未返回完整结果时的兜底同步请求
       if (!finalResource) {
-        const res = await api.post('/resources/generate-for-session/default', null, {
+        const res = await api.post(`/resources/generate-for-session/${sessionId}`, null, {
           params: { concept: conceptToGenerate },
         })
         setResource(res.data as ResourceResult)
         setProgressValue(100)
       }
     } catch (err: any) {
-      setProgressMessage(`生成失败：${err.message || '未知错误'}`)
-      setProgressValue(0)
+      setProgressMessage(`生成失败：${err.message || '未知错误'}，正在尝试同步兜底...`)
+      try {
+        const res = await api.post(`/resources/generate-for-session/${sessionId}`, null, {
+          params: { concept: conceptToGenerate },
+        })
+        setResource(res.data as ResourceResult)
+        setProgressMessage('')
+        setProgressValue(100)
+      } catch (fallbackErr: any) {
+        setProgressMessage(`生成失败：${fallbackErr.message || '未知错误'}`)
+        setProgressValue(0)
+      }
     } finally {
       setLoading(false)
     }
@@ -347,11 +369,13 @@ export function ResourceViewer({ sessionId }: Props) {
       {/* 资源内容标签页：文档/导图/练习/审核 */}
       {resource && (
         <Tabs defaultValue="document" className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-2xl border border-slate-200/80 bg-slate-100/70 p-1 sm:grid-cols-4">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-2xl border border-slate-200/80 bg-slate-100/70 p-1 sm:grid-cols-6">
             <TabTrigger value="document" icon={FileText} label="文档" />
             <TabTrigger value="mindmap" icon={Map} label="导图" />
             <TabTrigger value="exercises" icon={ListChecks} label="练习" />
             <TabTrigger value="debate" icon={BookOpen} label="审核" />
+            <TabTrigger value="thinking" icon={Workflow} label="思维路径" />
+            <TabTrigger value="versions" icon={History} label="版本" />
           </TabsList>
 
           <TabsContent value="document" className="mt-3">
@@ -410,8 +434,26 @@ export function ResourceViewer({ sessionId }: Props) {
                 <div className="space-y-4 p-5">
                   {resource.package.code_cases.map((c, i) => (
                     <div key={i} className="space-y-2">
-                      <h5 className="text-sm font-bold text-slate-800">{c.title}</h5>
+                      <div className="flex items-center justify-between">
+                        <h5 className="text-sm font-bold text-slate-800">{c.title}</h5>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1 text-xs text-slate-500 hover:bg-cyan-50 hover:text-cyan-700"
+                          onClick={() =>
+                            setShowVariableViz((prev) => ({ ...prev, [`code-${i}`]: !prev[`code-${i}`] }))
+                          }
+                        >
+                          {showVariableViz[`code-${i}`] ? (
+                            <EyeOff className="h-3.5 w-3.5" />
+                          ) : (
+                            <Eye className="h-3.5 w-3.5" />
+                          )}
+                          可视化变量
+                        </Button>
+                      </div>
                       <CodeBlock code={c.code} onRun={() => runInSandbox(c.code)} />
+                      {showVariableViz[`code-${i}`] && <VariableVisualizer code={c.code} />}
                       {c.explanation && (
                         <p className="text-xs leading-relaxed text-slate-500">{c.explanation}</p>
                       )}
@@ -456,7 +498,7 @@ export function ResourceViewer({ sessionId }: Props) {
                       </code>
                     </div>
                   )}
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {ex.starter_code && (
                       <Button
                         variant="outline"
@@ -465,6 +507,23 @@ export function ResourceViewer({ sessionId }: Props) {
                         onClick={() => runInSandbox(exerciseCodes[i] ?? ex.starter_code)}
                       >
                         <Play className="mr-1.5 h-3.5 w-3.5" /> 在沙箱运行
+                      </Button>
+                    )}
+                    {ex.starter_code && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-lg text-xs text-slate-500 hover:bg-cyan-50 hover:text-cyan-700"
+                        onClick={() =>
+                          setShowVariableViz((prev) => ({ ...prev, [`ex-${i}`]: !prev[`ex-${i}`] }))
+                        }
+                      >
+                        {showVariableViz[`ex-${i}`] ? (
+                          <EyeOff className="mr-1.5 h-3.5 w-3.5" />
+                        ) : (
+                          <Eye className="mr-1.5 h-3.5 w-3.5" />
+                        )}
+                        可视化变量
                       </Button>
                     )}
                     {ex.expected_output && (
@@ -510,6 +569,10 @@ export function ResourceViewer({ sessionId }: Props) {
                         </p>
                       )}
                     </motion.div>
+                  )}
+
+                  {showVariableViz[`ex-${i}`] && (
+                    <VariableVisualizer code={exerciseCodes[i] ?? ex.starter_code ?? ''} />
                   )}
                 </div>
               </GlassCard>
@@ -580,6 +643,14 @@ export function ResourceViewer({ sessionId }: Props) {
                 </div>
               </div>
             </GlassCard>
+          </TabsContent>
+
+          <TabsContent value="thinking" className="mt-3">
+            <ThinkingPathReplay concept={resource.concept} />
+          </TabsContent>
+
+          <TabsContent value="versions" className="mt-3">
+            <FurnaceTimeline concept={resource.concept} />
           </TabsContent>
         </Tabs>
       )}

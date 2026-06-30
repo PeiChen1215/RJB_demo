@@ -100,7 +100,25 @@ export interface JudgeRequest {
   concept?: string
 }
 
-// 学习资源相关接口：同步生成、流式生成、版本演进
+export interface ResourceVersion {
+  version_id: string
+  resource_id: string
+  concept: string
+  version: number
+  change_reason: string
+  triggered_by: string
+  content_snapshot?: any
+  created_at: string
+}
+
+export interface ThinkingStep {
+  agent: string
+  stage: string
+  message: string
+  timestamp?: string
+}
+
+// 学习资源相关接口：同步生成、流式生成、版本演进、思维路径、失败提交种子
 export const resourceApi = {
   generate: (concept: string, profile?: any) =>
     api.post('/resources/generate', null, { params: { concept, profile } }),
@@ -108,7 +126,14 @@ export const resourceApi = {
   generateStream: (sessionId: string, concept: string) =>
     fetch(`/api/resources/stream-generate?session_id=${sessionId}&concept=${encodeURIComponent(concept)}`),
 
-  getVersions: (concept: string) => api.get(`/resources/versions?concept=${encodeURIComponent(concept)}`),
+  getVersions: (concept: string) =>
+    api.get<{ concept: string; versions: ResourceVersion[] }>(`/resources/versions?concept=${encodeURIComponent(concept)}`),
+
+  getThinkingPath: (concept: string) =>
+    api.get<{ concept: string; steps: ThinkingStep[] }>(`/resources/thinking-path?concept=${encodeURIComponent(concept)}`),
+
+  seedFailedSubmissions: (sessionId: string, concept: string, count: number = 5) =>
+    api.post('/code/seed-failed-submissions', { session_id: sessionId, concept, count }),
 }
 
 // 代码判题相关接口
