@@ -150,6 +150,7 @@ export const resourceApi = {
 
 // 代码判题相关接口
 export const codeApi = {
+  execute: (code: string) => api.post('/code/execute', { code }),
   judge: (data: JudgeRequest) => api.post('/code/judge', data),
   judgeExercise: (data: JudgeRequest) => api.post('/code/judge-exercise', data),
 }
