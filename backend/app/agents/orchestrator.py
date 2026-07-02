@@ -145,7 +145,7 @@ class AgentOrchestrator:
             context=context,
             from_agent="user",
         )
-        result = self._route(msg)
+        result = self._route(msg, session)
         return self._to_agent_response(result)
 
     async def handle_chat_stream(
@@ -286,22 +286,28 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
     # 消息路由
     # ------------------------------------------------------------------
-    def _route(self, msg: AgentMessage) -> AgentMessage:
+    def _route(self, msg: AgentMessage, session: Optional[dict] = None) -> AgentMessage:
         """按意图路由到对应流程"""
         intent = msg.intent
         if intent == "KNOWLEDGE_REQUEST":
-            return self._knowledge_flow(msg)
+            return self._knowledge_flow(msg, session)
         if intent == "CODE_HELP":
-            return self._tutor_flow(msg)
+            return self._tutor_flow(msg, session)
         if intent == "PROGRESS_CHECK":
             return self._evaluate_flow(msg)
         if intent == "PATH_ADJUST":
             return self._path_adjust_flow(msg)
+        # 若当前处于苏格拉底辅导中且用户请求继续，则继续辅导流
+        if session and self._is_continue_tutor(msg, session):
+            return self._tutor_flow(msg, session)
         # 默认进入聊天/画像更新流程
         return self._safe_run(self.profiler, msg)
 
-    def _knowledge_flow(self, msg: AgentMessage) -> AgentMessage:
+    def _knowledge_flow(self, msg: AgentMessage, session: Optional[dict] = None) -> AgentMessage:
         """学习新知识流程：Navigator -> Generator -> Reviewer"""
+        # 切到学习新知识点时，重置苏格拉底辅导深度
+        if session:
+            session["socratic_depth"] = 0
         # 多来源获取目标知识点：payload > 消息提取 > 上下文
         concept = msg.payload.get("concept") or self._extract_concept(msg.payload.get("message", "")) or msg.context.get("target_concept")
         if not concept:
@@ -349,8 +355,8 @@ class AgentOrchestrator:
             from_agent="Reviewer",
         )
 
-    def _tutor_flow(self, msg: AgentMessage) -> AgentMessage:
-        """代码求助流程：Reviewer.tutor"""
+    def _tutor_flow(self, msg: AgentMessage, session: Optional[dict] = None) -> AgentMessage:
+        """代码求助流程：Reviewer.tutor，支持多轮 depth 递进"""
         user_msg = msg.payload.get("message", "")
         concept = msg.context.get("target_concept", "当前知识点")
 
@@ -360,21 +366,37 @@ class AgentOrchestrator:
         error_match = re.search(r"错误[：:]\s*(.+)", user_msg)
         error = error_match.group(1) if error_match else "请描述你遇到的错误"
 
+        # 从 session 中读取当前提问深度，实现 5 阶段递进
+        depth = 0
+        if session:
+            depth = session.get("socratic_depth", 0)
+
         tutor_msg = AgentMessage(
             intent=msg.intent,
             stage="tutor",
             payload={"error_message": error, "code": code, "concept": concept},
             context=msg.context,
+            metadata={"socratic_depth": depth},
             from_agent="user",
         )
         result = self._safe_run(self.reviewer, tutor_msg)
         socratic = result.payload
 
+        # 推进深度，最大到 convergence 后重置
+        next_depth = depth + 1
+        if next_depth >= 5:
+            next_depth = 0
+        if session:
+            session["socratic_depth"] = next_depth
+
+        question = socratic.get("question") or socratic.get("message") or "你遇到了什么问题？"
         return msg.reply(
             {
-                "message": socratic.get("question", "你遇到了什么问题？"),
+                "message": question,
+                "question": question,
                 "hint": socratic.get("hint"),
-                "can_provide_answer": socratic.get("can_provide_answer", False),
+                "can_provide_answer": socratic.get("can_provide_answer", depth >= 3),
+                "answer": socratic.get("answer"),
                 "stage": socratic.get("stage"),
             },
             stage="tutor",
@@ -505,6 +527,15 @@ class AgentOrchestrator:
             content=msg.payload,
             profile_update=msg.context.get("profile"),
         )
+
+    def _is_continue_tutor(self, msg: AgentMessage, session: dict) -> bool:
+        """判断用户是否希望继续苏格拉底辅导"""
+        # 只有处于辅导中（depth > 0）才继续
+        if session.get("socratic_depth", 0) <= 0:
+            return False
+        user_msg = msg.payload.get("message", "")
+        continue_patterns = ["继续", "下一步", "继续引导", "请继续", "接着问", "再问一下"]
+        return any(p in user_msg for p in continue_patterns)
 
     def _classify_intent(self, message: str) -> str:
         """识别学生意图（简化关键词版，未来可交给 Profiler 或 LLM）"""

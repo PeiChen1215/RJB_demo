@@ -37,7 +37,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ChatPanel } from '@/components/chat/ChatPanel'
 import { MasteryHeatmap } from '@/components/evaluation/MasteryHeatmap'
 import { ResourceViewer } from '@/components/resources/ResourceViewer'
-import { sessionApi, type SessionResponse } from '@/services/api'
+import { sessionApi, type SessionResponse, type EvidenceItem } from '@/services/api'
 import { cn } from '@/lib/utils'
 
 const KnowledgeGraph = lazy(() =>
@@ -343,6 +343,17 @@ function ProfileCard({
   stats: SessionStats | null
   delay: number
 }) {
+  const [evidence, setEvidence] = useState<Record<string, EvidenceItem[]>>({})
+  const [evidenceOpen, setEvidenceOpen] = useState(false)
+
+  useEffect(() => {
+    if (!session?.session_id) return
+    sessionApi
+      .getProfileEvidence(session.session_id)
+      .then((res) => setEvidence(res.data.evidence || {}))
+      .catch(() => setEvidence({}))
+  }, [session?.session_id, stats?.chat_count])
+
   return (
     <GlassCard className="overflow-hidden" delay={delay}>
       <div className="border-b border-slate-100 bg-gradient-to-r from-indigo-50/50 to-violet-50/50 p-5">
@@ -395,6 +406,36 @@ function ProfileCard({
               <ProfileRow label="学习节奏" value={session.profile.learning_pace} />
               <ProfileRow label="目标导向" value={session.profile.goal_orientation} />
             </div>
+
+            {/* 画像证据：展示动态构建画像的行为依据 */}
+            {Object.keys(evidence).length > 0 && (
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
+                <button
+                  onClick={() => setEvidenceOpen(!evidenceOpen)}
+                  className="flex w-full items-center justify-between text-xs font-bold text-indigo-700"
+                >
+                  <span>画像证据 ({Object.keys(evidence).length} 个维度)</span>
+                  <span>{evidenceOpen ? '收起' : '展开'}</span>
+                </button>
+                {evidenceOpen && (
+                  <div className="mt-2 space-y-2">
+                    {Object.entries(evidence).map(([dim, items]) => (
+                      <div key={dim}>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{dim}</p>
+                        <ul className="mt-1 space-y-1">
+                          {items.slice(0, 3).map((item, idx) => (
+                            <li key={idx} className="text-xs text-slate-600">
+                              · {item.evidence_type}
+                              {item.description && <span className="text-slate-400"> — {item.description}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* 汇总对话、资源、练习、正确率等核心统计 */}
             {stats && (

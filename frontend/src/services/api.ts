@@ -38,6 +38,13 @@ export interface SessionResponse {
   suggested_path: string[]
 }
 
+export interface EvidenceItem {
+  evidence_type: string
+  weight: number
+  description: string
+  created_at?: string
+}
+
 export interface ChatRequest {
   message: string
   message_type?: string
@@ -72,6 +79,11 @@ export const sessionApi = {
 
   getProfile: (sessionId: string) =>
     api.get(`/sessions/${sessionId}/profile`),
+
+  getProfileEvidence: (sessionId: string) =>
+    api.get<{ session_id: string; evidence: Record<string, EvidenceItem[]> }>(
+      `/sessions/${sessionId}/profile/evidence`
+    ),
 
   getStats: (sessionId: string) =>
     api.get(`/sessions/${sessionId}/stats`),

@@ -55,6 +55,7 @@ from app.services.database import (
     get_session,
     get_session_events,
     get_session_stats,
+    log_behavior_event as log_behavior_evidence,
     log_event,
     update_session,
 )
@@ -213,6 +214,31 @@ async def get_profile(session_id: str, request: Request):
     return session["profile"]
 
 
+@router.get("/{session_id}/profile/evidence")
+async def get_profile_evidence(session_id: str, request: Request):
+    """获取会话画像的证据列表（按维度聚合）"""
+    session = _load_session(request.app, session_id)
+    if not session:
+        return {"error": "会话不存在"}
+    from app.services.database import get_cognitive_evidence
+
+    rows = get_cognitive_evidence(session_id)
+    # 按维度聚合，保留最近 5 条
+    grouped: Dict[str, list] = {}
+    for r in rows:
+        dim = r.get("dimension", "unknown")
+        grouped.setdefault(dim, []).append({
+            "evidence_type": r.get("evidence_type"),
+            "weight": r.get("weight", 0.0),
+            "description": r.get("description", ""),
+            "created_at": r.get("created_at"),
+        })
+    for dim in grouped:
+        grouped[dim].sort(key=lambda x: x["created_at"] or "", reverse=True)
+        grouped[dim] = grouped[dim][:5]
+    return {"session_id": session_id, "evidence": grouped}
+
+
 @router.get("/{session_id}/stats")
 async def get_session_stats_endpoint(session_id: str, request: Request):
     """获取会话学习行为统计"""
@@ -282,11 +308,12 @@ async def log_behavior_event(
     if not session:
         return {"success": False, "error": "会话不存在"}
 
-    log_event(
-        session_id,
-        payload.event_type.value,
-        payload.payload,
+    log_behavior_evidence(
+        session_id=session_id,
+        event_type=payload.event_type.value,
         concept=payload.concept,
+        weight=payload.payload.get("weight", 1.0) if payload.payload else 1.0,
+        description=payload.payload.get("description", "") if payload.payload else "",
     )
 
     return {"success": True, "event_type": payload.event_type.value}
