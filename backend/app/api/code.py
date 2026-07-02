@@ -37,6 +37,20 @@ from app.services.knowledge_furnace import trigger_resource_review
 router = APIRouter()
 
 
+def _missing_expected_output_result() -> dict:
+    return {
+        "success": False,
+        "stdout": "",
+        "stderr": "",
+        "passed": False,
+        "actual_output": "",
+        "expected_output": "",
+        "execution_time": 0.0,
+        "violations": [],
+        "reason": "缺少期望输出，无法自动判题",
+    }
+
+
 class ExecuteRequest(BaseModel):
     code: str
 
@@ -92,8 +106,7 @@ async def judge_code(
     background_tasks: BackgroundTasks = None,
 ):
     """判题：执行代码并对比期望输出"""
-    executor = CodeExecutor()
-    result = executor.judge(payload.code, payload.expected_output)
+    result = _missing_expected_output_result() if not payload.expected_output.strip() else CodeExecutor().judge(payload.code, payload.expected_output)
 
     session_id = payload.session_id or "anonymous"
     concept = payload.concept or ""
@@ -160,8 +173,7 @@ async def judge_exercise(
     background_tasks: BackgroundTasks = None,
 ):
     """判题并更新会话中的练习记录"""
-    executor = CodeExecutor()
-    result = executor.judge(payload.code, payload.expected_output)
+    result = _missing_expected_output_result() if not payload.expected_output.strip() else CodeExecutor().judge(payload.code, payload.expected_output)
 
     session_id = payload.session_id or "anonymous"
     concept = payload.concept or ""

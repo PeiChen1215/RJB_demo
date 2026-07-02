@@ -4,6 +4,7 @@ import {
   BarChart3,
   BookOpen,
   Brain,
+  Braces,
   Code2,
   Copy,
   FlaskConical,
@@ -33,11 +34,15 @@ import {
   graphApi,
   resourceApi,
   sessionApi,
+  type AgentResponse,
+  type CodeVariable,
   type GraphData,
+  type ResourceDetail,
   type ResourceVersion,
   type SessionResponse,
   type ThinkingStep,
 } from '@/services/api'
+import { SocraticPanel } from '@/components/socratic/SocraticPanel'
 import { cn } from '@/lib/utils'
 
 type NavKey = 'profile' | 'graph' | 'resources' | 'chat' | 'code' | 'progress'
@@ -50,6 +55,8 @@ interface SessionStats {
   code_executed_count: number
   exercise_passed_count: number
   exercise_failed_count: number
+  daily_learning_minutes?: number
+  streak_days?: number
 }
 
 interface HeatmapItem {
@@ -57,6 +64,22 @@ interface HeatmapItem {
   mastery_probability: number
   observation_count?: number
   is_mastered?: boolean
+}
+
+interface SelectedHeatCell {
+  row: string
+  column: string
+  value: number
+  concept?: string
+  observations?: number
+  mastered?: boolean
+}
+
+interface MasteryAnalysisResult {
+  weakPoints: string[]
+  reviewPoints: string[]
+  recommendation: string
+  analyzedAt: string
 }
 
 interface HealthDetail {
@@ -80,6 +103,24 @@ interface PathNode {
 
 type KnowledgeEdge = GraphData['edges'][number]
 
+type ChatMessage = {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  agentName?: string
+  isStreaming?: boolean
+  timestamp: string
+  tutorPayload?: TutorPayload
+}
+
+type TutorPayload = {
+  question: string
+  hint?: string
+  answer?: string
+  canProvideAnswer?: boolean
+  stage?: string
+}
+
 const NAV_ITEMS: Array<{ key: NavKey; label: string; icon: ComponentType<{ className?: string }> }> = [
   { key: 'profile', label: '学习画像', icon: UserRound },
   { key: 'graph', label: '知识图谱', icon: Hexagon },
@@ -97,14 +138,18 @@ const AGENTS = [
   { name: 'Socrates', job: '引导提问中', status: 'online', accent: 'mint', time: '00:14' },
 ]
 
-const DEFAULT_HEATMAP = [
-  [90, 85, 80, 75, 70, 60, 40, 50],
-  [85, 78, 72, 70, 65, 55, 35, 45],
-  [80, 75, 70, 68, 60, 50, 30, 40],
-  [70, 65, 60, 55, 50, 45, 25, 35],
-  [60, 55, 50, 48, 40, 35, 20, 30],
-  [50, 45, 40, 38, 30, 25, 15, 25],
-]
+const FALLBACK_TARGET_CONCEPT = '文件读写'
+
+function getInitialTargetConcept() {
+  if (typeof window === 'undefined') return FALLBACK_TARGET_CONCEPT
+  const params = new URLSearchParams(window.location.search)
+  return (
+    params.get('target_concept') ||
+    params.get('target') ||
+    window.localStorage.getItem('eduhive.target_concept') ||
+    FALLBACK_TARGET_CONCEPT
+  ).trim()
+}
 
 const SAMPLE_CODE = `# 读取文件示例
 file_path = 'sample.txt'
@@ -129,6 +174,14 @@ Hello, EduHive!
 1: Hello, EduHive!
 2: 今天学习 Python 文件操作。
 3: 继续加油!`
+
+const SAMPLE_VARIABLES: CodeVariable[] = [
+  { name: 'file_path', type: 'str', value: "'sample.txt'", size: 10 },
+  { name: 'content', type: 'str', value: "'Hello, EduHive!\\n今天学习 Python 文件操作。\\n继续加油!'", size: 39 },
+  { name: 'lines', type: 'list', value: "['Hello, EduHive!\\n', '今天学习 Python 文件操作。\\n', '继续加油!']", size: 3 },
+  { name: 'i', type: 'int', value: '3' },
+  { name: 'line', type: 'str', value: "'继续加油!'", size: 5 },
+]
 
 function iconForConcept(name: string, module?: string): ComponentType<{ className?: string }> {
   const text = `${name}${module ?? ''}`
@@ -262,6 +315,170 @@ function isPathEdge(edge: KnowledgeEdge, plannedPath: string[]) {
   })
 }
 
+function inferCodeVariables(code: string, output: string): CodeVariable[] {
+  const variables = new Map<string, CodeVariable>()
+  const setVariable = (name: string, type: string, value: string, size?: number | null) => {
+    if (!/^[A-Za-z_]\w*$/.test(name)) return
+    variables.set(name, { name, type, value, size })
+  }
+  const inferType = (value: string) => {
+    if (/^(['"]).*\1$/.test(value)) return 'str'
+    if (/^-?\d+$/.test(value)) return 'int'
+    if (/^-?\d+\.\d+$/.test(value)) return 'float'
+    if (/^(True|False)$/.test(value)) return 'bool'
+    if (/^\[.*\]$/.test(value)) return 'list'
+    if (/^\{.*\}$/.test(value)) return 'dict'
+    if (/^\(.*\)$/.test(value)) return 'tuple'
+    return 'expr'
+  }
+
+  code.split('\n').forEach((rawLine) => {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) return
+    const match = line.match(/^([A-Za-z_]\w*)\s*=\s*(.+)$/)
+    if (!match) return
+    const value = match[2].replace(/\s+#.*$/, '').trim()
+    if (!value || value.includes('==')) return
+    setVariable(match[1], inferType(value), value)
+  })
+
+  const contentMatch = output.match(/文件内容:\s*\n([\s\S]*?)(?:\n\s*按行读取:|$)/)
+  if (contentMatch?.[1]) {
+    const content = contentMatch[1].trimEnd()
+    const lines = content.split(/\r?\n/)
+    setVariable('content', 'str', JSON.stringify(content), content.length)
+    setVariable('lines', 'list', JSON.stringify(lines), lines.length)
+  }
+
+  const numberedLines = [...output.matchAll(/^\s*(\d+):\s*(.+)$/gm)]
+  if (numberedLines.length) {
+    const last = numberedLines[numberedLines.length - 1]
+    setVariable('i', 'int', last[1])
+    setVariable('line', 'str', JSON.stringify(last[2]), last[2].length)
+  }
+
+  return [...variables.values()]
+}
+
+function normalizeCodeVariables(input: unknown): CodeVariable[] {
+  if (!input) return []
+  const source = Array.isArray(input)
+    ? input
+    : typeof input === 'object'
+      ? Object.entries(input as Record<string, unknown>).map(([name, value]) => {
+          if (value && typeof value === 'object' && ('name' in value || 'value' in value || 'type' in value)) {
+            return { name, ...(value as Record<string, unknown>) }
+          }
+          return { name, value, type: typeof value }
+        })
+      : []
+  const normalized: CodeVariable[] = []
+  source.forEach((item) => {
+    if (!item || typeof item !== 'object') return
+    const raw = item as Record<string, unknown>
+    const name = String(raw.name ?? raw.variable ?? raw.key ?? '').trim()
+    if (!name) return
+    const rawValue = raw.value ?? raw.preview ?? raw.repr ?? ''
+    const sizeValue = raw.size ?? raw.length
+    normalized.push({
+      name,
+      type: String(raw.type ?? raw.kind ?? typeof rawValue),
+      value: typeof rawValue === 'string' ? rawValue : JSON.stringify(rawValue),
+      size: typeof sizeValue === 'number' ? sizeValue : null,
+    })
+  })
+  return normalized
+}
+
+function extractCodeVariables(payload: unknown): CodeVariable[] {
+  if (!payload || typeof payload !== 'object') return []
+  const data = payload as Record<string, unknown>
+  const candidates = [
+    data.variables,
+    data.locals,
+    data.variable_snapshot,
+    data.variable_snapshots,
+    data.result && typeof data.result === 'object' ? (data.result as Record<string, unknown>).variables : undefined,
+    data.data && typeof data.data === 'object' ? (data.data as Record<string, unknown>).variables : undefined,
+  ]
+  for (const candidate of candidates) {
+    const normalized = normalizeCodeVariables(candidate)
+    if (normalized.length) return normalized
+  }
+  return []
+}
+
+function createChatMessage(role: ChatMessage['role'], content: string, agentName?: string, isStreaming = false): ChatMessage {
+  return {
+    id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    role,
+    content,
+    agentName,
+    isStreaming,
+    timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+  }
+}
+
+function extractAgentText(response?: AgentResponse | null, preferredModality?: 'visual' | 'auditory' | 'kinesthetic') {
+  const content = response?.content
+  if (!content) return ''
+  if (typeof content === 'string') return content
+  const directText = content.message || content.response_message || content.question || content.answer || content.text
+  if (directText) {
+    const profile = content.profile || response?.profile_update
+    if (!profile) return String(directText)
+    const mastered = Array.isArray(profile.mastered_concepts) && profile.mastered_concepts.length
+      ? `已掌握：${profile.mastered_concepts.join('、')}`
+      : ''
+    const modalityValue = preferredModality || profile.cognitive_modality
+    const modality = modalityValue === 'auditory' ? '听觉型' : modalityValue === 'kinesthetic' ? '动觉型' : modalityValue === 'visual' ? '视觉型' : ''
+    const profileLine = [
+      modality && `认知风格：${modality}`,
+      profile.learning_pace && `节奏：${profile.learning_pace}`,
+      mastered,
+    ].filter(Boolean).join('；')
+    return profileLine ? `${directText}\n\n画像更新：${profileLine}` : String(directText)
+  }
+  if (content.profile) return '学习画像已更新，我会根据你的知识水平和认知风格调整后续讲解。'
+  return '后端已返回结构化结果，当前没有可直接展示的自然语言回复。'
+}
+
+function asObject(value: unknown): Record<string, any> | null {
+  return value && typeof value === 'object' ? value as Record<string, any> : null
+}
+
+function optionalText(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function extractTutorPayload(response?: AgentResponse | null): TutorPayload | undefined {
+  const baseContent = asObject(response?.content)
+  const content = asObject(baseContent?.socratic) || asObject(baseContent?.payload) || asObject(baseContent?.data) || baseContent
+  if (!content) return undefined
+
+  const looksLikeTutor =
+    response?.response_type === 'tutor' ||
+    response?.agent_name === 'Socrates' ||
+    Boolean(content.question || content.hint || content.can_provide_answer || content.canProvideAnswer || content.stage)
+  if (!looksLikeTutor) return undefined
+
+  const question = optionalText(content.question) || optionalText(content.message) || optionalText(content.response_message)
+  if (!question) return undefined
+
+  return {
+    question,
+    hint: optionalText(content.hint),
+    answer: optionalText(content.answer),
+    canProvideAnswer: Boolean(content.can_provide_answer || content.canProvideAnswer),
+    stage: optionalText(content.stage) || response?.response_type,
+  }
+}
+
+function extractProfileFromResponse(response?: AgentResponse | null) {
+  const profile = response?.content?.profile || response?.profile_update
+  return profile && typeof profile === 'object' ? profile as Partial<SessionResponse['profile']> : null
+}
+
 function App() {
   const [activeNav, setActiveNav] = useState<NavKey>('graph')
   const [session, setSession] = useState<SessionResponse | null>(null)
@@ -269,23 +486,33 @@ function App() {
   const [graph, setGraph] = useState<GraphData | null>(null)
   const [heatmap, setHeatmap] = useState<HeatmapItem[]>([])
   const [health, setHealth] = useState<HealthDetail | null>(null)
-  const [selectedConcept, setSelectedConcept] = useState('文件读写')
-  const [selectedNodeId, setSelectedNodeId] = useState('文件读写')
-  const [resourceConcept, setResourceConcept] = useState('文件读写')
-  const [plannedPath, setPlannedPath] = useState<string[]>(['变量基础', '条件判断', '循环结构', '函数封装', '文件读写'])
+  const [targetConcept, setTargetConcept] = useState(getInitialTargetConcept)
+  const [selectedConcept, setSelectedConcept] = useState(targetConcept)
+  const [selectedNodeId, setSelectedNodeId] = useState(targetConcept)
+  const [resourceConcept, setResourceConcept] = useState(targetConcept)
+  const [plannedPath, setPlannedPath] = useState<string[]>(['变量基础', '条件判断', '循环结构', '函数封装', targetConcept])
   const [showGraphDetail, setShowGraphDetail] = useState(true)
   const [graphFocusNonce, setGraphFocusNonce] = useState(0)
-  const [selectedHeatCell, setSelectedHeatCell] = useState<{ row: string; column: string; value: number } | null>(null)
+  const [selectedHeatCell, setSelectedHeatCell] = useState<SelectedHeatCell | null>(null)
+  const [bktDetail, setBktDetail] = useState<any | null>(null)
+  const [bktLoading, setBktLoading] = useState(false)
+  const [masteryAnalyzing, setMasteryAnalyzing] = useState(false)
+  const [masteryAnalysis, setMasteryAnalysis] = useState<MasteryAnalysisResult | null>(null)
   const [workspaceNote, setWorkspaceNote] = useState('点击知识节点、Agent 或工具按钮开始联动。')
   const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([])
   const [versions, setVersions] = useState<ResourceVersion[]>([])
+  const [resourcePackage, setResourcePackage] = useState<ResourceDetail | null>(null)
+  const [resourcePanelLoading, setResourcePanelLoading] = useState(false)
   const [conceptDetail, setConceptDetail] = useState<any | null>(null)
   const [styleMode, setStyleMode] = useState<'visual' | 'auditory' | 'kinesthetic'>('visual')
-  const [chatInput, setChatInput] = useState('我想学习 Python 文件操作')
-  const [chatReply, setChatReply] = useState('你已经掌握了函数封装相关知识，接下来我们学习 Python 文件操作，这是非常重要的技能。建议先了解文件的打开模式和基本读写操作，我们可以通过示例练习来巩固理解。要开始学习吗？')
+  const [chatInput, setChatInput] = useState(() => `我想学习 ${targetConcept}`)
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    createChatMessage('assistant', `你已经掌握了前置知识，接下来我们学习「${targetConcept}」。你可以直接提问，我会结合学习画像、知识图谱和练习记录进行辅导。`, 'Socrates'),
+  ])
   const [chatLoading, setChatLoading] = useState(false)
   const [code, setCode] = useState(SAMPLE_CODE)
   const [codeOutput, setCodeOutput] = useState(SAMPLE_OUTPUT)
+  const [codeVariables, setCodeVariables] = useState<CodeVariable[]>(SAMPLE_VARIABLES)
   const [codeLoading, setCodeLoading] = useState(false)
   const [resourceStatus, setResourceStatus] = useState('资源生成接口待命')
   const [resourceLoading, setResourceLoading] = useState(false)
@@ -316,21 +543,39 @@ function App() {
   }
 
   useEffect(() => {
+    if (activeNav !== 'code' || codeVariables.length) return
+    const inferred = inferCodeVariables(code, codeOutput)
+    if (inferred.length) setCodeVariables(inferred)
+  }, [activeNav, code, codeOutput, codeVariables.length])
+
+  useEffect(() => {
     let cancelled = false
 
     async function bootstrap() {
       try {
         const [sessionRes, graphRes, healthRes] = await Promise.all([
-          sessionApi.create('Python 文件操作'),
+          sessionApi.create(targetConcept),
           graphApi.getGraph(),
           fetch('/health/detail').then((res) => res.json()).catch(() => null),
         ])
 
         if (cancelled) return
+        const nextTarget = sessionRes.data.target_concept || targetConcept
+        window.localStorage.setItem('eduhive.target_concept', nextTarget)
+        setTargetConcept(nextTarget)
+        setSelectedConcept(nextTarget)
+        setSelectedNodeId(nextTarget)
+        setResourceConcept(nextTarget)
+        if (sessionRes.data.suggested_path?.length) {
+          setPlannedPath(sessionRes.data.suggested_path)
+        }
         setSession(sessionRes.data)
+        if (['visual', 'auditory', 'kinesthetic'].includes(sessionRes.data.profile.cognitive_modality)) {
+          setStyleMode(sessionRes.data.profile.cognitive_modality as 'visual' | 'auditory' | 'kinesthetic')
+        }
         setGraph(graphRes.data)
         setHealth(healthRes)
-        await behaviorApi.log(sessionRes.data.session_id, 'command_center_opened', 'Python 文件操作', {
+        await behaviorApi.log(sessionRes.data.session_id, 'command_center_opened', nextTarget, {
           surface: 'command-center',
         }).catch(() => undefined)
       } catch {
@@ -344,7 +589,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [targetConcept])
 
   useEffect(() => {
     if (!session) return
@@ -394,6 +639,12 @@ function App() {
     setSelectedConcept(nextNode.title)
   }, [pathNodes, selectedConcept, selectedNodeId])
 
+  useEffect(() => {
+    if (activeNav !== 'resources') return
+    loadResource(resourceConcept, 'open')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNav, resourceConcept])
+
   const selectNode = async (node: PathNode) => {
     setSelectedNodeId(node.id)
     setSelectedConcept(node.title)
@@ -432,15 +683,33 @@ function App() {
   }
 
   const analyzeMastery = async () => {
-    if (!session) return
+    if (!session) {
+      setWorkspaceNote('会话尚未初始化完成，请稍后再分析掌握度。')
+      return
+    }
     navigateTo('progress', 'Evaluator 正在重算 BKT 掌握度...')
+    setMasteryAnalyzing(true)
     try {
       const res = await evaluationApi.analyze(session.session_id)
-      setWorkspaceNote(res.data.recommendation || '掌握度分析完成。')
-      const heatmapRes = await evaluationApi.getHeatmap(session.session_id)
-      setHeatmap(heatmapRes.data.data || [])
+      const recommendation = res.data.recommendation || '掌握度分析完成。'
+      const weakPoints = Array.isArray(res.data.weak_points) ? res.data.weak_points : []
+      const reviewPoints = Array.isArray(res.data.review_points) ? res.data.review_points : []
+      const analyzedAt = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      setWorkspaceNote(recommendation)
+      setMasteryAnalysis({ weakPoints, reviewPoints, recommendation, analyzedAt })
+      if (Array.isArray(res.data.heatmap_data)) {
+        setHeatmap(res.data.heatmap_data)
+      }
+      const [heatmapRes, statsRes] = await Promise.allSettled([
+        evaluationApi.getHeatmap(session.session_id),
+        sessionApi.getStats(session.session_id),
+      ])
+      if (heatmapRes.status === 'fulfilled') setHeatmap(heatmapRes.value.data.data || [])
+      if (statsRes.status === 'fulfilled') setStats(statsRes.value.data)
     } catch {
       setWorkspaceNote('评估接口暂不可用，当前展示最近一次掌握度。')
+    } finally {
+      setMasteryAnalyzing(false)
     }
   }
 
@@ -450,53 +719,154 @@ function App() {
       const res = await codeApi.execute(code)
       const stdout = res.data.stdout || ''
       const stderr = res.data.stderr || ''
-      setCodeOutput((stdout + (stderr ? `\n${stderr}` : '')).trim() || '代码执行完成，无输出。')
+      const violations = res.data.violations?.length ? `安全检查未通过:\n${res.data.violations.join('\n')}` : ''
+      const nextOutput = (stdout + (stderr ? `\n${stderr}` : '') + (violations ? `\n${violations}` : '')).trim()
+      setCodeOutput(nextOutput || '代码执行完成，无输出。')
+      ;(window as any).__eduhiveLastCodeResult = res.data
+      const responseVariables = extractCodeVariables(res.data)
+      const nextVariables = responseVariables.length
+        ? responseVariables
+        : inferCodeVariables(code, nextOutput)
+      setCodeVariables(nextVariables)
       if (session) {
-        await behaviorApi.log(session.session_id, 'code_executed', '文件读写', {
+        await behaviorApi.log(session.session_id, 'code_executed', selectedConcept, {
           source: 'command-center',
+          success: res.data.success,
+          variables: nextVariables.map((item) => item.name),
         }).catch(() => undefined)
       }
-    } catch (err) {
-      setCodeOutput(err instanceof Error ? err.message : '代码执行失败，请检查后端服务。')
+    } catch {
+      setCodeOutput('代码执行接口暂不可用，请检查后端服务。')
+      setCodeVariables([])
     } finally {
       setCodeLoading(false)
     }
   }
 
-  const sendChat = async () => {
-    if (!session || !chatInput.trim()) return
+  const sendChat = async (messageOverride?: string) => {
+    const messageText = (typeof messageOverride === 'string' ? messageOverride : chatInput).trim()
+    if (!messageText || chatLoading) return
+    setChatInput('')
+    const assistantId = `assistant-${Date.now()}`
+    setChatMessages((prev) => [
+      ...prev,
+      createChatMessage('user', messageText),
+      {
+        ...createChatMessage('assistant', '正在连接 Socrates 辅导链路...', 'Socrates', true),
+        id: assistantId,
+      },
+    ])
+
+    if (!session) {
+      setChatMessages((prev) => prev.map((message) => message.id === assistantId
+        ? { ...message, role: 'system', agentName: 'System', isStreaming: false, content: '后端会话还未创建完成，请稍后再发送。' }
+        : message))
+      return
+    }
+
     setChatLoading(true)
-    setChatReply('Agent 正在协同分析...')
+    let finalResponse: AgentResponse | null = null
+
+    const applyAssistantMessage = (content: string, agentName = 'Agent', isStreaming = true, tutorPayload?: TutorPayload) => {
+      setChatMessages((prev) => prev.map((message) => message.id === assistantId
+        ? { ...message, content, agentName, isStreaming, tutorPayload }
+        : message))
+    }
+    const syncProfileFromResponse = (response: AgentResponse | null) => {
+      const profile = extractProfileFromResponse(response)
+      if (!profile) return
+      setSession((current) => current ? {
+        ...current,
+        profile: {
+          ...current.profile,
+          ...profile,
+          cognitive_modality: styleMode,
+        },
+      } : current)
+    }
+    const applyAssistantResponse = (response: AgentResponse | null, fallbackText: string) => {
+      const tutorPayload = extractTutorPayload(response)
+      const content = tutorPayload?.question || extractAgentText(response, styleMode) || fallbackText
+      applyAssistantMessage(content, response?.agent_name || (tutorPayload ? 'Socrates' : 'Agent'), false, tutorPayload)
+    }
+
     try {
-      const response = await sessionApi.chatStream(session.session_id, chatInput.trim())
+      const response = await sessionApi.chatStream(session.session_id, messageText)
+      if (!response.ok) throw new Error(`chat-stream ${response.status}`)
       const reader = response.body?.getReader()
       if (!reader) throw new Error('无法建立 SSE 流')
 
       const decoder = new TextDecoder()
       let buffer = ''
-      let finalText = ''
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const event = JSON.parse(line.slice(6))
+        const chunks = buffer.split('\n\n')
+        buffer = chunks.pop() || ''
+        for (const chunk of chunks) {
+          const dataLine = chunk.split('\n').find((line) => line.startsWith('data: '))
+          if (!dataLine) continue
+          const event = JSON.parse(dataLine.slice(6))
           if (event.type === 'thinking' || event.type === 'progress') {
-            setChatReply(event.message || '多智能体正在协作...')
+            applyAssistantMessage(event.message || '多智能体正在协作...', event.agent || 'Agent', true)
           }
           if (event.type === 'complete') {
-            finalText = event.agent_response?.content?.message || JSON.stringify(event.agent_response?.content)
+            finalResponse = event.agent_response as AgentResponse
+            syncProfileFromResponse(finalResponse)
+            applyAssistantResponse(finalResponse, '对话完成，但后端没有返回可展示文本。')
+          }
+          if (event.type === 'error') {
+            throw new Error(event.message || 'chat-stream error')
           }
         }
       }
-      setChatReply(finalText || '对话完成，但未收到完整内容。')
-    } catch {
-      setChatReply('后端对话接口暂不可用。演示时可继续使用知识图谱、代码沙箱与热力图模块。')
+
+      if (!finalResponse) {
+        const fallback = await sessionApi.chat(session.session_id, { message: messageText, message_type: 'text' })
+        finalResponse = fallback.data
+        syncProfileFromResponse(finalResponse)
+        applyAssistantResponse(finalResponse, '同步对话完成，但没有可展示文本。')
+      }
+    } catch (error) {
+      try {
+        const fallback = await sessionApi.chat(session.session_id, { message: messageText, message_type: 'text' })
+        finalResponse = fallback.data
+        syncProfileFromResponse(finalResponse)
+        applyAssistantResponse(finalResponse, '同步对话完成，但没有可展示文本。')
+      } catch {
+        applyAssistantMessage('后端对话接口暂不可用，请确认服务已启动。知识图谱、学习资源和代码沙箱仍可继续调试。', 'System', false)
+      }
     } finally {
       setChatLoading(false)
+    }
+  }
+
+  const loadResource = async (concept = resourceConcept, surface: 'open' | 'refresh' | 'switch' = 'open') => {
+    setResourceConcept(concept)
+    setResourcePanelLoading(true)
+    setWorkspaceNote(`正在读取「${concept}」的学习资源包...`)
+    try {
+      const [latestRes, thinkingRes, versionRes] = await Promise.allSettled([
+        resourceApi.getLatest(concept),
+        resourceApi.getThinkingPath(concept),
+        resourceApi.getVersions(concept),
+      ])
+      if (latestRes.status === 'fulfilled') {
+        const resource = latestRes.value.data.resource
+        setResourcePackage(resource)
+        setResourceStatus(resource ? `已载入「${concept}」资源包` : `「${concept}」暂无已生成资源，请先生成。`)
+      }
+      if (thinkingRes.status === 'fulfilled') setThinkingSteps(thinkingRes.value.data.steps || [])
+      if (versionRes.status === 'fulfilled') setVersions(versionRes.value.data.versions || [])
+      if (session) {
+        behaviorApi.log(session.session_id, 'resource_switched', concept, { surface }).catch(() => undefined)
+      }
+    } catch {
+      setResourceStatus('资源详情接口暂不可用')
+      setWorkspaceNote('未能读取资源详情，请确认后端服务已启动。')
+    } finally {
+      setResourcePanelLoading(false)
     }
   }
 
@@ -517,6 +887,7 @@ function App() {
       if (!reader) throw new Error('无法建立资源生成流')
       const decoder = new TextDecoder()
       let buffer = ''
+      let completedResource: ResourceDetail | null = null
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -530,7 +901,16 @@ function App() {
             setResourceStatus(event.message)
             setWorkspaceNote(event.message)
           }
-          if (event.type === 'complete') setResourceStatus('资源生成与辩论审核完成')
+          if (event.type === 'complete') {
+            completedResource = {
+              concept,
+              ...(event.package || {}),
+              debate_report: event.debate_report || {},
+              status: event.debate_report?.status === 'REJECTED' ? 'rejected' : 'approved',
+            }
+            setResourcePackage(completedResource)
+            setResourceStatus('资源生成与辩论审核完成')
+          }
         }
       }
       const [thinkingRes, versionRes] = await Promise.allSettled([
@@ -539,6 +919,9 @@ function App() {
       ])
       if (thinkingRes.status === 'fulfilled') setThinkingSteps(thinkingRes.value.data.steps || [])
       if (versionRes.status === 'fulfilled') setVersions(versionRes.value.data.versions || [])
+      await loadResource(concept, 'refresh').catch(() => {
+        if (completedResource) setResourcePackage(completedResource)
+      })
       navigateTo('resources', `「${concept}」学习资源已生成，可查看讲义、练习与审核记录。`)
     } catch {
       setResourceStatus('资源生成流未连接，当前展示本地演示状态')
@@ -546,6 +929,38 @@ function App() {
     } finally {
       setResourceLoading(false)
     }
+  }
+
+  const sendCodeCaseToSandbox = (codeCase: Record<string, any>) => {
+    const nextCode = String(codeCase.code || codeCase.starter_code || SAMPLE_CODE)
+    setCode(nextCode)
+    navigateTo('code', `已将「${codeCase.title || resourceConcept}」代码案例载入代码沙箱。`)
+    if (session) {
+      behaviorApi.log(session.session_id, 'code_case_viewed', resourceConcept, {
+        title: codeCase.title,
+        action: 'send_to_sandbox',
+      }).catch(() => undefined)
+    }
+  }
+
+  const runResourceCode = async (codeText: string) => {
+    const res = await codeApi.execute(codeText)
+    return res.data
+  }
+
+  const judgeResourceExercise = async (exercise: Record<string, any>, codeText: string) => {
+    const res = await codeApi.judgeExercise({
+      code: codeText,
+      expected_output: String(exercise.expected_output || ''),
+      session_id: session?.session_id,
+      concept: resourceConcept,
+    })
+    if (session) {
+      behaviorApi.log(session.session_id, 'exercise_attempt', resourceConcept, {
+        question: exercise.question,
+      }).catch(() => undefined)
+    }
+    return res.data
   }
 
   const runAgentAction = async (agentName: string) => {
@@ -582,19 +997,55 @@ function App() {
     setChatInput(`我在学习「${selectedConcept}」时答错了，请用苏格拉底方式引导我`)
   }
 
-  const selectHeatCell = (row: string, column: string, value: number) => {
-    setSelectedHeatCell({ row, column, value })
-    navigateTo('progress', `已选中「${column}/${row}」能力格，当前掌握度 ${value}%。`)
+  const selectHeatCell = async (cell: SelectedHeatCell) => {
+    setSelectedHeatCell(cell)
+    navigateTo('progress', `已选中「${cell.concept || `${cell.column}/${cell.row}`}」，当前掌握度 ${cell.value}%。`)
     if (session) {
-      behaviorApi.log(session.session_id, 'heatmap_cell_selected', column, { row, value }).catch(() => undefined)
+      behaviorApi.log(session.session_id, 'heatmap_cell_selected', cell.concept || cell.column, {
+        row: cell.row,
+        column: cell.column,
+        value: cell.value,
+        observations: cell.observations,
+      }).catch(() => undefined)
+      if (cell.concept) {
+        setBktLoading(true)
+        try {
+          const res = await evaluationApi.getBkt(session.session_id, cell.concept)
+          setBktDetail(res.data)
+        } catch {
+          setBktDetail(null)
+          setWorkspaceNote('已选中热力图单元，但 BKT 详情接口暂不可用。')
+        } finally {
+          setBktLoading(false)
+        }
+      }
     }
   }
 
-  const changeStyleMode = (mode: 'visual' | 'auditory' | 'kinesthetic') => {
+  const changeStyleMode = async (mode: 'visual' | 'auditory' | 'kinesthetic') => {
     setStyleMode(mode)
-    setWorkspaceNote(`认知风格渲染切换为：${mode === 'visual' ? '视觉型' : mode === 'auditory' ? '听觉型' : '动觉型'}。`)
+    setSession((current) => current ? {
+      ...current,
+      profile: {
+        ...current.profile,
+        cognitive_modality: mode,
+      },
+    } : current)
+    setWorkspaceNote(`认知风格画像已切换为：${mode === 'visual' ? '视觉型' : mode === 'auditory' ? '听觉型' : '动觉型'}。`)
     if (session) {
-      behaviorApi.log(session.session_id, 'cognitive_style_preview', selectedConcept, { mode }).catch(() => undefined)
+      sessionApi.updateProfile(session.session_id, { cognitive_modality: mode })
+        .then((res) => {
+          if (res.data.profile) {
+            setSession((current) => current ? { ...current, profile: res.data.profile } : current)
+          }
+        })
+        .catch(() => {
+          setWorkspaceNote('认知风格已在前端切换，但后端画像同步失败，请确认服务状态。')
+        })
+      behaviorApi.log(session.session_id, 'cognitive_style_preview', selectedConcept, {
+        mode,
+        description: `用户手动切换认知风格为 ${mode}`,
+      }).catch(() => undefined)
     }
   }
 
@@ -617,8 +1068,8 @@ function App() {
         </nav>
 
         <div className="mt-auto space-y-4">
-          <LearningMeter value={70} />
-          <StreakCard />
+          <LearningMeter stats={stats} />
+          <StreakCard stats={stats} />
         </div>
       </aside>
 
@@ -637,7 +1088,7 @@ function App() {
           <section className="module-page flex-1">
             {activeNav === 'profile' && (
               <div className="module-grid profile-page">
-                <ProfilePanel session={session} masteredCount={masteredCount} />
+                <ProfilePanel session={session} masteredCount={masteredCount} targetConcept={targetConcept} />
                 <AgentPanel onAgentAction={runAgentAction} />
                 <WorkspaceDock
                   activeNav={activeNav}
@@ -690,11 +1141,24 @@ function App() {
               <div className="module-grid resource-page">
                 <ResourceLibraryPanel
                   selectedConcept={resourceConcept}
+                  resource={resourcePackage}
                   resourceStatus={resourceStatus}
+                  loading={resourcePanelLoading}
                   versions={versions}
                   thinkingSteps={thinkingSteps}
                   onGenerateResource={() => generateResource(resourceConcept, 'resource')}
+                  onRefresh={() => loadResource(resourceConcept, 'refresh')}
                   onPlanPath={planPath}
+                  onSendCodeCase={sendCodeCaseToSandbox}
+                  onRunCode={runResourceCode}
+                  onJudgeExercise={judgeResourceExercise}
+                  onSectionView={(section) => {
+                    if (session) {
+                      behaviorApi.log(session.session_id, section === 'mindmap' ? 'mindmap_clicked' : section === 'review' ? 'debate_viewed' : 'resource_switched', resourceConcept, {
+                        section,
+                      }).catch(() => undefined)
+                    }
+                  }}
                 />
                 <WorkspaceDock
                   activeNav={activeNav}
@@ -715,9 +1179,11 @@ function App() {
                 <ChatCommand
                   input={chatInput}
                   setInput={setChatInput}
-                  reply={chatReply}
+                  messages={chatMessages}
                   loading={chatLoading}
+                  targetConcept={targetConcept}
                   onSend={sendChat}
+                  onContinueTutor={() => sendChat('请继续用苏格拉底式提问引导我，不要直接给答案。')}
                 />
                 <WorkspaceDock
                   activeNav={activeNav}
@@ -739,15 +1205,31 @@ function App() {
                   code={code}
                   setCode={setCode}
                   output={codeOutput}
+                  variables={codeVariables}
                   loading={codeLoading}
                   onRun={runCode}
+                  onReset={() => {
+                    setCode(SAMPLE_CODE)
+                    setCodeOutput(SAMPLE_OUTPUT)
+                    setCodeVariables(SAMPLE_VARIABLES)
+                  }}
                 />
               </div>
             )}
 
             {activeNav === 'progress' && (
               <div className="module-grid progress-page">
-                <HeatmapPanel items={heatmap} stats={stats} selectedCell={selectedHeatCell} onSelectCell={selectHeatCell} onAnalyze={analyzeMastery} />
+                <HeatmapPanel
+                  items={heatmap}
+                  stats={stats}
+                  selectedCell={selectedHeatCell}
+                  bktDetail={bktDetail}
+                  bktLoading={bktLoading}
+                  analyzing={masteryAnalyzing}
+                  analysis={masteryAnalysis}
+                  onSelectCell={selectHeatCell}
+                  onAnalyze={analyzeMastery}
+                />
                 <WorkspaceDock
                   activeNav={activeNav}
                   selectedConcept={selectedConcept}
@@ -1061,77 +1543,425 @@ function GraphNode({
 function ChatCommand({
   input,
   setInput,
-  reply,
+  messages,
   loading,
+  targetConcept,
   onSend,
+  onContinueTutor,
 }: {
   input: string
   setInput: (value: string) => void
-  reply: string
+  messages: ChatMessage[]
   loading: boolean
+  targetConcept: string
   onSend: () => void
+  onContinueTutor: () => void
 }) {
+  const messagesRef = useRef<HTMLDivElement | null>(null)
+  const voiceRecognitionRef = useRef<any | null>(null)
+  const [voiceStatus, setVoiceStatus] = useState<'idle' | 'listening' | 'unsupported'>('idle')
+
+  useEffect(() => {
+    messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' })
+  }, [messages])
+
+  useEffect(() => {
+    return () => {
+      voiceRecognitionRef.current?.stop?.()
+      voiceRecognitionRef.current = null
+    }
+  }, [])
+
+  const toggleVoiceInput = () => {
+    if (voiceStatus === 'listening' && voiceRecognitionRef.current) {
+      voiceRecognitionRef.current.stop()
+      voiceRecognitionRef.current = null
+      setVoiceStatus('idle')
+      return
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      setVoiceStatus('unsupported')
+      return
+    }
+
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'zh-CN'
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
+    recognition.onstart = () => setVoiceStatus('listening')
+    recognition.onend = () => {
+      voiceRecognitionRef.current = null
+      setVoiceStatus('idle')
+    }
+    recognition.onerror = () => {
+      voiceRecognitionRef.current = null
+      setVoiceStatus('idle')
+    }
+    recognition.onresult = (event: any) => {
+      const transcript = String(event.results?.[0]?.[0]?.transcript || '').trim()
+      if (transcript) {
+        setInput(input.trim() ? `${input.trim()} ${transcript}` : transcript)
+      }
+    }
+    voiceRecognitionRef.current = recognition
+    recognition.start()
+  }
+
   return (
-    <Panel className="min-h-[300px]">
-      <PanelHeader title="AI 学习对话" icon={MessageSquare} meta={<span className="flex items-center gap-2 text-xs text-emerald-300"><span className="h-2 w-2 rounded-full bg-emerald-400" />AI 助教</span>} />
-      <div className="flex h-[calc(100%-54px)] flex-col gap-3">
-        <div className="flex gap-3">
-          <HexAvatar icon={Brain} tone="amber" />
-          <div className="dialogue-bubble">
-            <p>{reply}</p>
-            <span>10:24</span>
-          </div>
+    <Panel className="chat-command-panel">
+      <PanelHeader
+        title="AI 学习对话"
+        subtitle="Socrates / Navigator / Profiler"
+        icon={MessageSquare}
+        meta={<span className="flex items-center gap-2 text-xs text-emerald-300"><span className="h-2 w-2 rounded-full bg-emerald-400" />后端对话接口</span>}
+      />
+      <div className="chat-shell">
+        <div className="chat-context-strip">
+          <span>当前学习目标</span>
+          <strong>{targetConcept}</strong>
+          <em>提问后会调用后端 Agent 编排链路，并记录到学习画像。</em>
         </div>
-        <div className="ml-auto flex max-w-[82%] gap-3">
-          <div className="dialogue-bubble user">
-            <p>好的，我想先看一个读取文件的例子。</p>
-            <span>10:25</span>
-          </div>
-          <HexAvatar icon={UserRound} tone="mint" />
+
+        <div ref={messagesRef} className="chat-message-list">
+          {messages.map((message) => (
+            <motion.div
+              key={message.id}
+              className={cn('chat-message-row', message.role === 'user' && 'user', message.role === 'system' && 'system')}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              {message.role !== 'user' && <HexAvatar icon={message.role === 'system' ? Server : Brain} tone={message.role === 'system' ? 'amber' : 'mint'} />}
+              <div className="dialogue-bubble">
+                <div className="chat-message-meta">
+                  <strong>{message.role === 'user' ? '你' : message.agentName || 'AI 助教'}</strong>
+                  <span>{message.timestamp}</span>
+                </div>
+                {message.tutorPayload ? (
+                  <SocraticPanel
+                    question={message.tutorPayload.question}
+                    hint={message.tutorPayload.hint}
+                    answer={message.tutorPayload.answer}
+                    canProvideAnswer={message.tutorPayload.canProvideAnswer}
+                    stage={message.tutorPayload.stage}
+                    onNext={onContinueTutor}
+                  />
+                ) : (
+                  <p>{message.content}</p>
+                )}
+                {message.isStreaming && (
+                  <span className="chat-streaming">
+                    <i className="typing-dot" />
+                    <i className="typing-dot" />
+                    <i className="typing-dot" />
+                    正在思考
+                  </span>
+                )}
+              </div>
+              {message.role === 'user' && <HexAvatar icon={UserRound} tone="amber" />}
+            </motion.div>
+          ))}
         </div>
-        <div className="mt-auto flex items-center gap-2 rounded-md border border-white/10 bg-black/25 p-2">
-          <input
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') onSend()
-            }}
-            className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-100 outline-none placeholder:text-slate-600"
-            placeholder="输入你的问题..."
-          />
-          <Mic className="h-4 w-4 text-slate-500" />
-          <button onClick={onSend} disabled={loading} className="send-button">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 fill-current" />}
-          </button>
+
+        <div className="chat-composer">
+          <div className="chat-suggestions">
+            {['解释当前知识点', '给我一道练习', '我哪里没掌握'].map((text) => (
+              <button
+                type="button"
+                key={text}
+                onClick={() => setInput(text)}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+          <div className="chat-input-frame">
+            <input
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing) onSend()
+              }}
+              className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-100 outline-none placeholder:text-slate-600"
+              placeholder="输入你的问题，例如：为什么 open 要写 encoding？"
+            />
+            <button
+              type="button"
+              onClick={toggleVoiceInput}
+              className={cn('voice-button', voiceStatus === 'listening' && 'listening', voiceStatus === 'unsupported' && 'unsupported')}
+              title={voiceStatus === 'unsupported' ? '当前浏览器不支持语音输入' : voiceStatus === 'listening' ? '正在听，点击停止' : '语音输入'}
+              aria-label={voiceStatus === 'listening' ? '停止语音输入' : '语音输入'}
+            >
+              <Mic className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={() => onSend()} disabled={loading || !input.trim()} className="send-button">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 fill-current" />}
+            </button>
+          </div>
         </div>
       </div>
     </Panel>
   )
 }
 
+type ExerciseView = {
+  question: string
+  starter_code: string
+  expected_output: string
+  hints: string[]
+  solution: string
+  raw: Record<string, any>
+  answerLeaked: boolean
+}
+
+function textFrom(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function looksLikePythonCode(value: string) {
+  return /(^|\n)\s*(def |class |for |while |if |with |import |from |print\(|[a-zA-Z_]\w*\s*=)/.test(value)
+}
+
+function makeStarterFromExercise(concept: string, expectedOutput: string) {
+  const expectedLine = expectedOutput ? `# 目标输出：${expectedOutput}` : '# 目标输出：请根据题目要求补全'
+  return `# 请在这里完成「${concept}」练习\n${expectedLine}\n`
+}
+
+function normalizeExercise(exercise: Record<string, any>, index: number, concept: string): ExerciseView {
+  const rawQuestion = textFrom(exercise.question || exercise.prompt || exercise.title || exercise.description)
+  const rawStarter = textFrom(exercise.starter_code || exercise.template || exercise.code)
+  const rawSolution = textFrom(exercise.solution || exercise.answer || exercise.reference_answer)
+  const expectedOutput = textFrom(exercise.expected_output || exercise.expected || exercise.output)
+  const answerLeaked =
+    Boolean(rawSolution && rawQuestion && rawQuestion === rawSolution) ||
+    Boolean(rawSolution && rawStarter && rawStarter === rawSolution) ||
+    looksLikePythonCode(rawQuestion)
+  const question = answerLeaked || !rawQuestion
+    ? `请完成「${concept}」第 ${index + 1} 道编程练习，修改下方作答区代码，使程序输出指定结果。`
+    : rawQuestion
+  const hints = Array.isArray(exercise.hints)
+    ? exercise.hints.map((hint) => textFrom(hint)).filter(Boolean)
+    : []
+
+  return {
+    question,
+    starter_code: answerLeaked ? makeStarterFromExercise(concept, expectedOutput) : rawStarter || makeStarterFromExercise(concept, expectedOutput),
+    expected_output: expectedOutput,
+    hints,
+    solution: rawSolution,
+    raw: exercise,
+    answerLeaked,
+  }
+}
+
+function RichLearningText({ title, content, tone = 'paper' }: { title?: string; content?: string; tone?: 'paper' | 'audio' | 'map' }) {
+  const blocks: ReactNode[] = []
+  const lines = String(content || '').split('\n')
+  let paragraph: string[] = []
+  let code: string[] = []
+  let inCode = false
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    blocks.push(<p key={`p-${blocks.length}`}>{paragraph.join(' ')}</p>)
+    paragraph = []
+  }
+
+  const flushCode = () => {
+    if (!code.length) return
+    blocks.push(<pre className="readable-code" key={`code-${blocks.length}`}>{code.join('\n')}</pre>)
+    code = []
+  }
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trimEnd()
+    const trimmed = line.trim()
+
+    if (trimmed.startsWith('```')) {
+      if (inCode) {
+        flushCode()
+        inCode = false
+      } else {
+        flushParagraph()
+        inCode = true
+      }
+      return
+    }
+
+    if (inCode) {
+      code.push(line)
+      return
+    }
+
+    if (!trimmed) {
+      flushParagraph()
+      return
+    }
+
+    if (/^#{1,4}\s+/.test(trimmed)) {
+      flushParagraph()
+      const level = Math.min((trimmed.match(/^#+/)?.[0].length || 2), 4)
+      const text = trimmed.replace(/^#{1,4}\s+/, '')
+      blocks.push(level <= 2
+        ? <h3 key={`h-${blocks.length}`}>{text}</h3>
+        : <h4 key={`h-${blocks.length}`}>{text}</h4>)
+      return
+    }
+
+    if (/^[-*]\s+/.test(trimmed) || /^\d+[.)]\s+/.test(trimmed)) {
+      flushParagraph()
+      blocks.push(<div className="readable-list-line" key={`li-${blocks.length}`}>{trimmed.replace(/^([-*]|\d+[.)])\s+/, '')}</div>)
+      return
+    }
+
+    paragraph.push(trimmed)
+  })
+
+  flushParagraph()
+  flushCode()
+
+  return (
+    <article className={cn('resource-readable', `resource-readable-${tone}`)}>
+      {title && <p className="resource-readable-kicker">{title}</p>}
+      {blocks.length ? blocks : <p>后端暂未返回内容。</p>}
+    </article>
+  )
+}
+
+function MindmapReadable({ content }: { content?: string }) {
+  const lines = String(content || '').split('\n').map((line) => line.trim()).filter(Boolean)
+  const nodes = lines
+    .filter((line) => !/^graph|^mindmap/i.test(line))
+    .map((line) => line.replace(/-->|---|:::.+$/g, ' -> ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 10)
+
+  return (
+    <div className="mindmap-reader">
+      <div className="mindmap-node-cloud">
+        {(nodes.length ? nodes : ['暂无导图节点']).map((line, index) => (
+          <span key={`${line}-${index}`}>{line}</span>
+        ))}
+      </div>
+      <details className="resource-raw-details">
+        <summary>查看 Mermaid 原始导图</summary>
+        <pre className="readable-code">{content || '后端未返回导图内容。'}</pre>
+      </details>
+    </div>
+  )
+}
+
 function ResourceLibraryPanel({
   selectedConcept,
+  resource,
   resourceStatus,
+  loading,
   versions,
   thinkingSteps,
   onGenerateResource,
+  onRefresh,
   onPlanPath,
+  onSendCodeCase,
+  onRunCode,
+  onJudgeExercise,
+  onSectionView,
 }: {
   selectedConcept: string
+  resource: ResourceDetail | null
   resourceStatus: string
+  loading: boolean
   versions: ResourceVersion[]
   thinkingSteps: ThinkingStep[]
   onGenerateResource: () => void
+  onRefresh: () => void
   onPlanPath: () => void
+  onSendCodeCase: (codeCase: Record<string, any>) => void
+  onRunCode: (codeText: string) => Promise<any>
+  onJudgeExercise: (exercise: Record<string, any>, codeText: string) => Promise<any>
+  onSectionView: (section: string) => void
 }) {
+  type ResourceSection = 'document' | 'mindmap' | 'exercise' | 'code' | 'audio' | 'review' | 'versions'
+  const [activeSection, setActiveSection] = useState<ResourceSection>('document')
+  const [activeExerciseIndex, setActiveExerciseIndex] = useState(0)
+  const [exerciseCode, setExerciseCode] = useState('')
+  const [resultText, setResultText] = useState('')
+  const [actionLoading, setActionLoading] = useState(false)
   const latestVersion = versions[0]
+  const snapshot = latestVersion?.content_snapshot || {}
+  const activeResource: ResourceDetail | null = resource || (Object.keys(snapshot).length ? {
+    concept: selectedConcept,
+    document: snapshot.document,
+    mindmap: snapshot.mindmap,
+    exercises: snapshot.exercises || [],
+    code_cases: snapshot.code_cases || [],
+    audio_text: snapshot.audio_text,
+    debate_report: snapshot.debate_report,
+  } : null)
+  const rawExercises = activeResource?.exercises || []
+  const exercises = useMemo(
+    () => rawExercises.map((exercise, index) => normalizeExercise(exercise, index, selectedConcept)),
+    [rawExercises, selectedConcept],
+  )
+  const codeCases = activeResource?.code_cases || []
+  const currentExercise = exercises[activeExerciseIndex] || exercises[0]
+  const hasResource = Boolean(activeResource && (
+    activeResource.document ||
+    activeResource.mindmap ||
+    exercises.length ||
+    codeCases.length ||
+    activeResource.audio_text ||
+    activeResource.debate_report
+  ))
   const resourceSections = [
-    ['智能讲义', '根据知识图谱与学习画像生成知识讲解。', 'document'],
-    ['思维导图', '把概念、前置依赖和易错点组织成结构图。', 'mindmap'],
-    ['练习题', '围绕当前掌握度生成巩固题与迁移题。', 'exercise'],
-    ['代码案例', '可发送到代码沙箱继续运行和调试。', 'code'],
-    ['审核报告', '展示 Reviewer 辩论审核结论和修改理由。', 'review'],
-  ]
+    ['智能讲义', '根据知识图谱与学习画像生成知识讲解。', 'document', Boolean(activeResource?.document)],
+    ['思维导图', '把概念、前置依赖和易错点组织成结构图。', 'mindmap', Boolean(activeResource?.mindmap)],
+    ['练习题', '围绕当前掌握度生成巩固题与迁移题。', 'exercise', exercises.length > 0],
+    ['代码案例', '可发送到代码沙箱继续运行和调试。', 'code', codeCases.length > 0],
+    ['听觉讲解', '读取后端生成的 audio_text 讲解稿。', 'audio', Boolean(activeResource?.audio_text)],
+    ['审核报告', '展示 Reviewer 辩论审核结论和修改理由。', 'review', Boolean(activeResource?.debate_report)],
+  ] as const
+
+  useEffect(() => {
+    setActiveExerciseIndex(0)
+    setExerciseCode(String(exercises[0]?.starter_code || ''))
+    setResultText('')
+  }, [selectedConcept, exercises[0]?.starter_code])
+
+  const selectSection = (section: ResourceSection) => {
+    setActiveSection(section)
+    setResultText('')
+    onSectionView(section)
+  }
+
+  const runCurrentExercise = async () => {
+    if (!currentExercise) return
+    if (!currentExercise.expected_output) {
+      setResultText('当前练习缺少 expected_output，无法进行自动判题。请先重新生成资源，或查看参考答案后手动练习。')
+      return
+    }
+    setActionLoading(true)
+    try {
+      const result = await onJudgeExercise(currentExercise, exerciseCode)
+      setResultText(typeof result === 'string' ? result : JSON.stringify(result, null, 2))
+    } catch {
+      setResultText('练习判题接口暂不可用，请确认后端服务。')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const runCodeCase = async (codeCase: Record<string, any>) => {
+    setActionLoading(true)
+    try {
+      const result = await onRunCode(String(codeCase.code || ''))
+      setResultText(`${result.stdout || ''}${result.stderr ? `\n${result.stderr}` : ''}`.trim() || '代码执行完成，无输出。')
+    } catch {
+      setResultText('代码执行接口暂不可用，请确认后端服务。')
+    } finally {
+      setActionLoading(false)
+    }
+  }
 
   return (
     <Panel className="resource-library-panel">
@@ -1142,33 +1972,175 @@ function ResourceLibraryPanel({
         meta={
           <div className="flex gap-2">
             <button onClick={onPlanPath} className="tool-button"><Route className="h-3.5 w-3.5" />路径</button>
+            <button onClick={onRefresh} className="tool-button"><RefreshCw className="h-3.5 w-3.5" />刷新</button>
             <button onClick={onGenerateResource} className="run-button"><Sparkles className="h-3.5 w-3.5" />重新生成</button>
           </div>
         }
       />
 
       <div className="resource-stage">
-        <div className="resource-hero">
-          <p>当前资源包</p>
-          <h3>{selectedConcept}</h3>
-          <span>{resourceStatus}</span>
-          <div className="resource-scanline" />
+        <div className="resource-control-rail">
+          <div className="resource-hero">
+            <p>当前资源包</p>
+            <button type="button" onClick={onRefresh} className="resource-title-button">
+              <h3>{selectedConcept}</h3>
+            </button>
+            <span>{resourceStatus}</span>
+            <div className="resource-hero-stats">
+              <strong>{hasResource ? '已载入' : '待生成'}</strong>
+              <em>{activeResource?.status || 'resource/latest'}</em>
+            </div>
+            <div className="resource-scanline" />
+          </div>
+
+          <div className="resource-section-grid">
+            {resourceSections.map(([title, desc, key, available], index) => (
+              <motion.button
+                type="button"
+                key={key}
+                onClick={() => selectSection(key)}
+                className={cn('resource-chip text-left', activeSection === key && 'active', available && 'available')}
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.06 }}
+              >
+                <strong>{title}</strong>
+                <span>{desc}</span>
+                <em>{available ? '后端数据已就绪' : '等待生成数据'}</em>
+              </motion.button>
+            ))}
+          </div>
         </div>
 
-        <div className="resource-section-grid">
-          {resourceSections.map(([title, desc, key], index) => (
-            <motion.button
-              type="button"
-              key={key}
-              className="resource-chip text-left"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.06 }}
-            >
-              <strong>{title}</strong>
-              <span>{desc}</span>
-            </motion.button>
-          ))}
+        <div className="resource-main-view">
+          {loading && (
+            <div className="resource-empty-state">
+              <Loader2 className="h-5 w-5 animate-spin text-amber-300" />
+              <span>正在从后端读取资源包...</span>
+            </div>
+          )}
+
+          {!loading && !hasResource && (
+            <div className="resource-empty-state">
+              <Sparkles className="h-5 w-5 text-amber-300" />
+              <strong>当前知识点还没有资源包</strong>
+              <span>点击“重新生成”会调用后端资源生成流，并在完成后自动展示。</span>
+            </div>
+          )}
+
+          {!loading && hasResource && activeSection === 'document' && (
+            <div className="resource-document">
+              <RichLearningText title="智能讲义" content={activeResource?.document || '后端未返回讲义内容。'} />
+            </div>
+          )}
+
+          {!loading && hasResource && activeSection === 'mindmap' && (
+            <div className="resource-document">
+              <p className="resource-inspector-title">思维导图</p>
+              <MindmapReadable content={activeResource?.mindmap || '后端未返回导图内容。'} />
+            </div>
+          )}
+
+          {!loading && hasResource && activeSection === 'exercise' && (
+            <div className="resource-exercise">
+              <p className="resource-inspector-title">练习题</p>
+              <div className="exercise-tabs">
+                {exercises.map((exercise, index) => (
+                  <button
+                    key={`${exercise.question}-${index}`}
+                    onClick={() => {
+                      setActiveExerciseIndex(index)
+                      setExerciseCode(String(exercise.starter_code || ''))
+                      setResultText('')
+                    }}
+                    className={cn(index === activeExerciseIndex && 'active')}
+                  >
+                    练习 {index + 1}
+                  </button>
+                ))}
+              </div>
+              {currentExercise ? (
+                <>
+                  <div className="exercise-prompt-card">
+                    <span>题目</span>
+                    <h4>{currentExercise.question}</h4>
+                    {currentExercise.expected_output ? (
+                      <p>期望输出：<code>{currentExercise.expected_output}</code></p>
+                    ) : (
+                      <p className="warning">后端未返回 expected_output，本题暂不开放自动判题。</p>
+                    )}
+                    {currentExercise.answerLeaked && (
+                      <p className="warning">已检测到生成结果中答案混入题干/初始代码，页面已自动隐藏答案并重置作答区。</p>
+                    )}
+                    {currentExercise.hints.length > 0 && (
+                      <div className="exercise-hints">
+                        {currentExercise.hints.map((hint, hintIndex) => <em key={`${hint}-${hintIndex}`}>{hint}</em>)}
+                      </div>
+                    )}
+                  </div>
+                  <textarea value={exerciseCode} onChange={(event) => setExerciseCode(event.target.value)} />
+                  <div className="resource-actions">
+                    <button onClick={runCurrentExercise} disabled={actionLoading || !currentExercise.expected_output} className="run-button">
+                      {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                      提交判题
+                    </button>
+                    <button onClick={() => setResultText(String(currentExercise.solution || '暂无参考答案'))} className="tool-button">参考答案</button>
+                  </div>
+                </>
+              ) : <span className="resource-muted">后端未返回练习题。</span>}
+            </div>
+          )}
+
+          {!loading && hasResource && activeSection === 'code' && (
+            <div className="resource-code-list">
+              <p className="resource-inspector-title">代码案例</p>
+              {codeCases.length ? codeCases.map((codeCase, index) => (
+                <div className="resource-code-card" key={`${codeCase.title || 'case'}-${index}`}>
+                  <strong>{codeCase.title || `代码案例 ${index + 1}`}</strong>
+                  <span>{codeCase.explanation || '后端生成的可运行代码案例。'}</span>
+                  <pre className="readable-code">{codeCase.code || ''}</pre>
+                  <div className="resource-actions">
+                    <button onClick={() => runCodeCase(codeCase)} disabled={actionLoading} className="run-button">
+                      {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                      运行
+                    </button>
+                    <button onClick={() => onSendCodeCase(codeCase)} className="tool-button"><Send className="h-3.5 w-3.5" />发送到沙箱</button>
+                  </div>
+                </div>
+              )) : <span className="resource-muted">后端未返回代码案例。</span>}
+            </div>
+          )}
+
+          {!loading && hasResource && activeSection === 'audio' && (
+            <div className="resource-document">
+              <RichLearningText title="听觉讲解稿" content={activeResource?.audio_text || '后端未返回听觉讲解稿。'} tone="audio" />
+            </div>
+          )}
+
+          {!loading && hasResource && activeSection === 'review' && (
+            <div className="resource-review">
+              <p className="resource-inspector-title">审核报告</p>
+              <strong>{String(activeResource?.debate_report?.status || 'UNKNOWN')}</strong>
+              {(activeResource?.debate_report?.rounds || []).map((round: any, index: number) => (
+                <div className="review-round" key={`${round.agent || 'review'}-${index}`}>
+                  <em>{round.agent || `Reviewer ${index + 1}`}</em>
+                  <span>{round.verdict || 'PASS'}</span>
+                  <p>{round.message || round.suggestion || '审核通过。'}</p>
+                </div>
+              ))}
+              <details className="resource-raw-details">
+                <summary>查看完整审核数据</summary>
+                <pre className="readable-code">{JSON.stringify(activeResource?.debate_report || {}, null, 2)}</pre>
+              </details>
+            </div>
+          )}
+
+          {resultText && (
+            <div className="resource-result">
+              <p className="resource-inspector-title">接口返回</p>
+              <pre>{resultText}</pre>
+            </div>
+          )}
         </div>
 
         <div className="resource-inspector">
@@ -1215,29 +2187,30 @@ function CodeCommand({
   code,
   setCode,
   output,
+  variables,
   loading,
   onRun,
+  onReset,
 }: {
   code: string
   setCode: (value: string) => void
   output: string
+  variables: CodeVariable[]
   loading: boolean
   onRun: () => void
+  onReset: () => void
 }) {
-  const variables = [
-    ['file_path', 'str', "'sample.txt'"],
-    ['content', 'str', "'Hello, Edu...'"],
-    ['lines', 'list', "['Hello,...']"],
-    ['len(lines)', 'int', '3'],
-    ['i', 'int', '3'],
-    ['line', 'str', "'继续加油！'"],
-  ]
+  const hasRunOutput = output.trim().length > 0 && output !== SAMPLE_OUTPUT
+  const displayVariables = useMemo(() => {
+    const normalized = normalizeCodeVariables(variables)
+    return normalized.length ? normalized : inferCodeVariables(code, output)
+  }, [code, output, variables])
 
   return (
     <Panel className="min-h-[300px]">
       <PanelHeader
         title="代码沙箱"
-        subtitle="Pyodide / 后端执行"
+        subtitle="后端受控执行 / 变量快照"
         icon={Code2}
         meta={
           <div className="flex gap-2">
@@ -1245,7 +2218,7 @@ function CodeCommand({
               {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5 fill-current" />}
               运行
             </button>
-            <button onClick={() => setCode(SAMPLE_CODE)} className="tool-button"><RefreshCw className="h-3.5 w-3.5" />重置</button>
+            <button onClick={onReset} className="tool-button"><RefreshCw className="h-3.5 w-3.5" />重置</button>
           </div>
         }
       />
@@ -1267,18 +2240,29 @@ function CodeCommand({
             <pre>{output}</pre>
           </div>
           <div className="console-box">
-            <p className="console-title">变量</p>
-            <table>
-              <tbody>
-                {variables.map(([name, type, value]) => (
-                  <tr key={name}>
-                    <td>{name}</td>
-                    <td>{type}</td>
-                    <td>{value}</td>
-                  </tr>
+            <p className="console-title">
+              变量快照
+              <span>{displayVariables.length ? `${displayVariables.length} 个` : '等待运行'}</span>
+            </p>
+            {displayVariables.length ? (
+              <div className="variable-stack">
+                {displayVariables.map((item) => (
+                  <div className="variable-row" key={`${item.name}-${item.type}`}>
+                    <div className="variable-head">
+                      <code>{item.name}</code>
+                      <span>{item.type}</span>
+                    </div>
+                    <pre>{item.value}</pre>
+                    {typeof item.size === 'number' && <small>len = {item.size}</small>}
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            ) : (
+              <div className="variable-empty">
+                <Braces className="h-4 w-4" />
+                <span>{hasRunOutput ? '本次运行没有检测到可展示的顶层变量。请确认代码中存在变量赋值。' : '运行代码后，这里会显示后端返回的变量名、类型和值。'}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1286,7 +2270,7 @@ function CodeCommand({
   )
 }
 
-function ProfilePanel({ session, masteredCount }: { session: SessionResponse | null; masteredCount: number }) {
+function ProfilePanel({ session, masteredCount, targetConcept }: { session: SessionResponse | null; masteredCount: number; targetConcept: string }) {
   const profile = session?.profile
   const [expanded, setExpanded] = useState(false)
   const modality = profile?.cognitive_modality === 'auditory' ? '听觉型' : profile?.cognitive_modality === 'kinesthetic' ? '动觉型' : '视觉型'
@@ -1312,13 +2296,13 @@ function ProfilePanel({ session, masteredCount }: { session: SessionResponse | n
         <div className="profile-avatar">
           <img src="/assets/student-avatar-visual.png" alt="当前学习者画像" />
           <p>当前学习者</p>
-          <span>目标：Python 文件操作</span>
+          <span>目标：{session?.target_concept || targetConcept}</span>
         </div>
         <div className="profile-summary">
           <ProfileLine label="知识水平" value={`${profile?.knowledge_level ?? 3}/5`} blocks={profile?.knowledge_level ?? 3} />
           <ProfileLine label="认知风格" value={`${modality} · ${field}`} />
           <ProfileLine label="学习节奏" value={profile?.learning_pace || '稳步推进'} spark />
-          <ProfileLine label="学习目标" value="通过 Python 文件操作练习" />
+          <ProfileLine label="学习目标" value={`通过「${session?.target_concept || targetConcept}」练习`} />
           <p className="profile-mastered">已掌握 {masteredCount} 个关键节点</p>
         </div>
       </div>
@@ -1343,13 +2327,29 @@ function ProfilePanel({ session, masteredCount }: { session: SessionResponse | n
           </div>
         </motion.div>
       )}
+      <div className="profile-insight-strip">
+        <div>
+          <span>画像置信度</span>
+          <strong>{session ? '92%' : '待同步'}</strong>
+        </div>
+        <div>
+          <span>学习轨迹</span>
+          <strong>{masteredCount} / {Math.max(masteredCount + 4, 8)}</strong>
+        </div>
+        <div>
+          <span>推荐干预</span>
+          <strong>{profile?.learning_pace === 'fast' ? '挑战题' : profile?.learning_pace === 'slow' ? '分步讲解' : '路径巩固'}</strong>
+        </div>
+      </div>
     </Panel>
   )
 }
 
 function AgentPanel({ onAgentAction }: { onAgentAction: (agentName: string) => void }) {
+  const workingCount = AGENTS.filter((agent) => agent.status === 'working').length
+
   return (
-    <Panel className="min-h-[230px]">
+    <Panel className="agent-panel min-h-[230px]">
       <PanelHeader title="Agent 协作" icon={Sparkles} meta={<span className="flex items-center gap-2 text-xs text-emerald-300"><span className="h-2 w-2 rounded-full bg-emerald-400" />5/5 在线</span>} />
       <div className="agent-list">
         {AGENTS.map((agent, index) => (
@@ -1374,6 +2374,19 @@ function AgentPanel({ onAgentAction }: { onAgentAction: (agentName: string) => v
           </motion.button>
         ))}
       </div>
+      <div className="agent-insight-board">
+        <div className="agent-orbit">
+          {AGENTS.map((agent, index) => (
+            <span key={agent.name} className={cn(agent.accent, agent.status === 'working' && 'working')} style={{ '--agent-index': index } as Record<string, number>} />
+          ))}
+          <strong>协作中枢</strong>
+        </div>
+        <div className="agent-metrics">
+          <p><span>活跃任务</span><strong>{workingCount || 1}</strong></p>
+          <p><span>链路状态</span><strong>稳定</strong></p>
+          <p><span>本轮策略</span><strong>画像-路径-反馈</strong></p>
+        </div>
+      </div>
     </Panel>
   )
 }
@@ -1382,54 +2395,123 @@ function HeatmapPanel({
   items,
   stats,
   selectedCell,
+  bktDetail,
+  bktLoading,
+  analyzing,
+  analysis,
   onSelectCell,
   onAnalyze,
 }: {
   items: HeatmapItem[]
   stats: SessionStats | null
-  selectedCell: { row: string; column: string; value: number } | null
-  onSelectCell: (row: string, column: string, value: number) => void
+  selectedCell: SelectedHeatCell | null
+  bktDetail: any | null
+  bktLoading: boolean
+  analyzing: boolean
+  analysis: MasteryAnalysisResult | null
+  onSelectCell: (cell: SelectedHeatCell) => void
   onAnalyze: () => void
 }) {
-  const values = useMemo(() => {
-    if (items.length === 0) return DEFAULT_HEATMAP
-    const percentages = items.map((item) => Math.round(item.mastery_probability * 100))
-    return DEFAULT_HEATMAP.map((row, rowIndex) =>
-      row.map((value, cellIndex) => percentages[(rowIndex + cellIndex) % percentages.length] ?? value)
-    )
+  const cells = useMemo(() => {
+    return items.map((item) => {
+      const value = Math.round(item.mastery_probability * 100)
+      const band = value >= 78 ? '已掌握' : value >= 62 ? '需巩固' : value >= 45 ? '薄弱' : '待学习'
+      return {
+        row: band,
+        column: '真实知识点',
+        concept: item.concept,
+        value,
+        observations: item.observation_count ?? 0,
+        mastered: item.is_mastered || value >= 78,
+      }
+    })
   }, [items])
-
-  const columns = ['基础', '语法', '控制流', '函数', '文件', '模块', '面向对象', '综合']
-  const rows = ['记忆', '理解', '应用', '分析', '评价', '创造']
+  const summary = useMemo(() => {
+    const average = items.length
+      ? Math.round(items.reduce((sum, item) => sum + item.mastery_probability, 0) / items.length * 100)
+      : null
+    const mastered = items.filter((item) => item.is_mastered || item.mastery_probability >= 0.78).length
+    const weak = items.filter((item) => item.mastery_probability < 0.6).length
+    return { average, mastered, weak, total: items.length }
+  }, [items])
+  const bktParams = bktDetail?.bkt_params || {}
+  const observationCount = Number(bktParams.observation_count ?? 0)
+  const modelEvidenceText = bktDetail?.concept
+    ? observationCount > 0
+      ? `基于 ${observationCount} 次练习记录判断`
+      : '暂无该知识点练习记录，当前为初始估计'
+    : '点击热力格后查看模型证据'
 
   return (
-    <Panel className="min-h-[300px]">
-      <PanelHeader title="掌握度热力图" icon={Gauge} meta={<button onClick={onAnalyze} className="rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-slate-300 hover:border-amber-300/40 hover:text-amber-200">重新分析</button>} />
-      <div className="heatmap-grid">
-        <span />
-        {columns.map((column) => <b key={column}>{column}</b>)}
-        {rows.map((row, rowIndex) => (
-          <div className="contents" key={row}>
-            <b>{row}</b>
-            {values[rowIndex].map((value, cellIndex) => (
-              <button
-                key={`${row}-${cellIndex}`}
-                onClick={() => onSelectCell(row, columns[cellIndex], value)}
-                className={cn(selectedCell?.row === row && selectedCell.column === columns[cellIndex] && 'selected')}
-                style={{ ['--heat-bg' as string]: heatColor(value) }}
-              >
-                {value}%
-              </button>
-            ))}
-          </div>
-        ))}
-      </div>
-      <div className="mt-4">
-        <div className="flex items-center justify-between text-xs text-slate-500">
-          <span>{selectedCell ? `${selectedCell.column}/${selectedCell.row}: ${selectedCell.value}%` : `练习提交：${stats?.exercise_submitted_count ?? 0}`}</span>
-          <span>掌握度：0% 25% 50% 75% 100%</span>
+    <Panel className="heatmap-panel min-h-[300px]">
+      <PanelHeader
+        title="掌握度热力图"
+        subtitle="BKT 驱动的知识点诊断"
+        icon={Gauge}
+        meta={
+          <button onClick={onAnalyze} disabled={analyzing} className="heatmap-analyze-button">
+            {analyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Gauge className="h-3.5 w-3.5" />}
+            {analyzing ? '分析中' : '重新分析'}
+          </button>
+        }
+      />
+      <div className="heatmap-overview">
+        <div>
+          <span>平均掌握</span>
+          <strong>{summary.average === null ? '--' : `${summary.average}%`}</strong>
         </div>
-        <div className="mt-2 h-2 rounded-full bg-gradient-to-r from-red-600 via-amber-500 to-emerald-400" />
+        <div>
+          <span>稳定掌握</span>
+          <strong>{summary.mastered}/{summary.total}</strong>
+        </div>
+        <div>
+          <span>薄弱预警</span>
+          <strong>{summary.weak}</strong>
+        </div>
+        <div>
+          <span>练习提交</span>
+          <strong>{stats?.exercise_submitted_count ?? 0}</strong>
+        </div>
+      </div>
+      {cells.length > 0 ? (
+        <div className="heatmap-grid real-knowledge-grid">
+          {cells.map((cell) => (
+            <button
+              key={cell.concept}
+              onClick={() => onSelectCell(cell)}
+              className={cn(selectedCell?.concept === cell.concept && 'selected', cell.mastered && 'mastered')}
+              style={{ ['--heat-bg' as string]: heatColor(cell.value), ['--heat-strength' as string]: `${Math.max(0.18, cell.value / 100)}` }}
+            >
+              <span className="heatmap-band">{cell.row}</span>
+              <strong>{cell.value}%</strong>
+              <span>{cell.concept}</span>
+              <em>{cell.observations} 次练习记录</em>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="heatmap-empty">
+          <Gauge className="h-6 w-6" />
+          <strong>暂无真实掌握度数据</strong>
+          <span>完成练习、判题或点击“重新分析”后，这里会按后端知识点逐项生成热力卡片。</span>
+        </div>
+      )}
+      <div className="heatmap-footer">
+        <div className="heatmap-selected">
+          <span>{analysis ? `最近分析 ${analysis.analyzedAt}` : '当前诊断'}</span>
+          <strong>{selectedCell ? `${selectedCell.concept || selectedCell.column} · ${selectedCell.row}` : analysis ? `薄弱 ${analysis.weakPoints.length} · 巩固 ${analysis.reviewPoints.length}` : '选择任意热力格'}</strong>
+          <em>{selectedCell ? `掌握度 ${selectedCell.value}% · 观测 ${selectedCell.observations ?? 0} 次` : analysis ? (analysis.weakPoints[0] ? `优先补强：${analysis.weakPoints.slice(0, 2).join('、')}` : '暂无薄弱点，建议保持练习节奏。') : '点击格子后读取 BKT 详情'}</em>
+        </div>
+        <div className="heatmap-bkt-strip">
+          <span>{bktLoading ? '模型诊断读取中...' : bktDetail?.concept ? `掌握度模型：${bktDetail.concept}` : '掌握度模型待选中'}</span>
+          <strong>{bktDetail?.mastery_probability !== undefined ? `${Math.round(bktDetail.mastery_probability * 100)}%` : '--'}</strong>
+          <em>{modelEvidenceText}</em>
+        </div>
+        <div className="heatmap-scale" aria-hidden="true">
+          <span>低掌握</span>
+          <span>需巩固</span>
+          <span>已掌握</span>
+        </div>
       </div>
     </Panel>
   )
@@ -1607,28 +2689,32 @@ function ProfileLine({
   )
 }
 
-function LearningMeter({ value }: { value: number }) {
+function LearningMeter({ stats }: { stats: SessionStats | null }) {
+  const minutes = typeof stats?.daily_learning_minutes === 'number' ? Math.max(0, Math.round(stats.daily_learning_minutes)) : null
+  const progress = minutes === null ? 0 : Math.min(100, Math.round(minutes / 60 * 100))
   return (
     <div className="sidebar-card">
       <div>
         <p className="text-sm text-slate-400">今日学习时长</p>
-        <strong className="mt-1 block text-3xl text-white">42 <span className="text-base text-slate-400">分钟</span></strong>
-        <p className="text-xs text-slate-500">目标 60 分钟</p>
+        <strong className="mt-1 block text-3xl text-white">{minutes ?? '--'} <span className="text-base text-slate-400">分钟</span></strong>
+        <p className="text-xs text-slate-500">{minutes === null ? '暂无真实时长数据' : '目标 60 分钟'}</p>
       </div>
-      <div className="radial-meter" style={{ ['--value' as string]: `${value * 3.6}deg` }}>
-        <span>{value}%</span>
+      <div className="radial-meter" style={{ ['--value' as string]: `${progress * 3.6}deg` }}>
+        <span>{minutes === null ? '--' : `${progress}%`}</span>
       </div>
     </div>
   )
 }
 
-function StreakCard() {
+function StreakCard({ stats }: { stats: SessionStats | null }) {
+  const streakDays = typeof stats?.streak_days === 'number' ? Math.max(0, Math.round(stats.streak_days)) : null
   return (
     <div className="sidebar-card">
       <Zap className="h-9 w-9 fill-amber-400 text-amber-400" />
       <div>
         <p className="text-sm text-slate-400">连续学习</p>
-        <strong className="text-3xl text-amber-300">7 <span className="text-base text-slate-400">天</span></strong>
+        <strong className="text-3xl text-amber-300">{streakDays ?? '--'} <span className="text-base text-slate-400">天</span></strong>
+        {streakDays === null && <p className="text-xs text-slate-500">暂无真实连续天数</p>}
       </div>
     </div>
   )

@@ -214,6 +214,34 @@ async def get_profile(session_id: str, request: Request):
     return session["profile"]
 
 
+@router.patch("/{session_id}/profile")
+async def patch_profile(session_id: str, payload: Dict[str, object], request: Request):
+    session = _load_session(request.app, session_id)
+    if not session:
+        return {"success": False, "error": "session not found"}
+
+    allowed = {
+        "knowledge_level",
+        "cognitive_field",
+        "cognitive_modality",
+        "learning_pace",
+        "goal_orientation",
+        "error_patterns",
+        "mastered_concepts",
+    }
+    profile = session.get("profile", get_default_profile().model_dump())
+    for key, value in payload.items():
+        if key in allowed:
+            profile[key] = value
+
+    if profile.get("cognitive_modality") not in {"visual", "auditory", "kinesthetic"}:
+        profile["cognitive_modality"] = "visual"
+
+    session["profile"] = profile
+    _save_session(request.app, session)
+    return {"success": True, "profile": profile}
+
+
 @router.get("/{session_id}/profile/evidence")
 async def get_profile_evidence(session_id: str, request: Request):
     """获取会话画像的证据列表（按维度聚合）"""

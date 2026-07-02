@@ -1,21 +1,10 @@
-/**
- * 需求：苏格拉底提问链 UI（C8）。
- * 功能：
- *   - 展示当前引导问题与提示；
- *   - 提供「查看参考思路」与「继续引导」按钮；
- *   - 显示当前所处阶段（澄清/探查/验证/反例/收敛）。
- *
- * TODO:
- * - [已完成] 问题/提示/答案展示
- * - [已完成] 阶段标签与交互按钮
- * - [待完成] 与后端多轮 depth 联动，实现真正的 5 阶段递进
- */
-import { useState } from 'react'
-import { ChevronRight, Eye, HelpCircle, Lightbulb } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { ChevronRight, Eye, HelpCircle, Lightbulb, MessageCircleQuestion } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { GlassCard } from '@/components/ui/glass-card'
+import { cn } from '@/lib/utils'
 
 const STAGE_NAMES: Record<string, string> = {
   clarification: '澄清问题',
@@ -23,9 +12,19 @@ const STAGE_NAMES: Record<string, string> = {
   evidence_check: '验证证据',
   counter_example: '反例思考',
   convergence: '收敛答案',
+  tutor: '引导中',
 }
 
-interface Props {
+const STAGE_HINTS: Record<string, string> = {
+  clarification: '先只看报错类型、行号和你刚才期望程序做什么，不急着改代码。',
+  assumption_probe: '想一想：你默认认为哪个文件、变量或函数一定存在？这个假设可能成立吗？',
+  evidence_check: '回到代码里找证据：相关变量的值、文件路径、打开模式、缩进和异常位置分别是什么？',
+  counter_example: '换一个输入、换一个路径，或者让文件不存在，程序会发生什么？',
+  convergence: '把原因压缩成一句话，再说出你准备修改的第一行代码。',
+  tutor: '先描述你观察到的现象，再尝试解释它为什么发生。',
+}
+
+interface SocraticPanelProps {
   question: string
   hint?: string
   answer?: string
@@ -33,6 +32,7 @@ interface Props {
   stage?: string
   onNext?: () => void
   onReveal?: () => void
+  className?: string
 }
 
 export function SocraticPanel({
@@ -43,59 +43,76 @@ export function SocraticPanel({
   stage,
   onNext,
   onReveal,
-}: Props) {
+  className,
+}: SocraticPanelProps) {
+  const [showHint, setShowHint] = useState(false)
   const [showAnswer, setShowAnswer] = useState(false)
+  const displayHint = useMemo(() => {
+    const trimmed = hint?.trim()
+    if (trimmed) return trimmed
+    return STAGE_HINTS[stage || 'tutor'] || STAGE_HINTS.tutor
+  }, [hint, stage])
+  const canRevealAnswer = Boolean(answer?.trim() && canProvideAnswer)
 
-  const handleReveal = () => {
-    setShowAnswer(true)
+  const toggleHint = () => {
+    setShowHint((value) => !value)
     onReveal?.()
   }
 
   return (
-    <GlassCard className="border-l-4 border-l-amber-400" hover={false}>
-      <div className="mb-2 flex flex-wrap items-center gap-2 text-amber-700">
-        <HelpCircle className="h-4 w-4" />
-        <span className="font-bold">苏格拉底式辅导</span>
-        {stage && (
-          <Badge variant="secondary" className="text-[10px]">
-            {STAGE_NAMES[stage] || stage}
-          </Badge>
-        )}
+    <GlassCard
+      hover={false}
+      className={cn(
+        'socratic-card border-amber-300/35 bg-slate-950/82 p-4 text-slate-100 shadow-[0_18px_50px_rgba(251,191,36,.16)]',
+        className
+      )}
+    >
+      <div className="socratic-card-header">
+        <span className="socratic-orbit">
+          <MessageCircleQuestion className="h-4 w-4" />
+        </span>
+        <div>
+          <p>苏格拉底式引导</p>
+          <span>按阶段追问，帮助你自己定位原因。</span>
+        </div>
+        <Badge variant="secondary" className="socratic-stage-badge">
+          {STAGE_NAMES[stage || 'tutor'] || stage || '引导中'}
+        </Badge>
       </div>
 
-      <p className="text-sm font-medium leading-relaxed text-slate-800">{question}</p>
+      <div className="socratic-question">
+        <HelpCircle className="mt-1 h-4 w-4 shrink-0 text-amber-300" />
+        <p>{question}</p>
+      </div>
 
-      {hint && (
-        <div className="mt-3 flex items-start gap-2 rounded-xl bg-amber-50/70 p-3 text-xs text-slate-600">
-          <Lightbulb className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-          <span>{hint}</span>
+      {showHint && (
+        <div className="socratic-hint">
+          <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+          <span>{displayHint}</span>
         </div>
       )}
 
-      {answer && (showAnswer || canProvideAnswer) && (
-        <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50/70 p-3 text-xs text-emerald-800">
-          <span className="font-bold">参考思路：</span>
-          {answer}
+      {answer && showAnswer && (
+        <div className="socratic-answer">
+          <strong>参考思路</strong>
+          <p>{answer}</p>
         </div>
       )}
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {answer && !showAnswer && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1 rounded-lg text-xs"
-            onClick={handleReveal}
-          >
-            <Eye className="h-3.5 w-3.5" /> 查看提示
+      <div className="socratic-actions">
+        <Button type="button" variant="outline" size="sm" className="socratic-outline-button" onClick={toggleHint}>
+          <Eye className="h-3.5 w-3.5" />
+          {showHint ? '收起提示' : '查看提示'}
+        </Button>
+        {canRevealAnswer && !showAnswer && (
+          <Button type="button" variant="outline" size="sm" className="socratic-outline-button" onClick={() => setShowAnswer(true)}>
+            <Eye className="h-3.5 w-3.5" />
+            参考思路
           </Button>
         )}
-        <Button
-          size="sm"
-          className="h-8 gap-1 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-xs text-white"
-          onClick={onNext}
-        >
-          <ChevronRight className="h-3.5 w-3.5" /> 继续引导
+        <Button type="button" size="sm" className="socratic-primary-button" onClick={onNext}>
+          <ChevronRight className="h-3.5 w-3.5" />
+          继续引导
         </Button>
       </div>
     </GlassCard>

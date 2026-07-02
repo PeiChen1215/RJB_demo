@@ -80,6 +80,12 @@ export const sessionApi = {
   getProfile: (sessionId: string) =>
     api.get(`/sessions/${sessionId}/profile`),
 
+  updateProfile: (sessionId: string, profilePatch: Partial<SessionResponse['profile']>) =>
+    api.patch<{ success: boolean; profile: SessionResponse['profile'] }>(
+      `/sessions/${sessionId}/profile`,
+      profilePatch
+    ),
+
   getProfileEvidence: (sessionId: string) =>
     api.get<{ session_id: string; evidence: Record<string, EvidenceItem[]> }>(
       `/sessions/${sessionId}/profile/evidence`
@@ -112,6 +118,22 @@ export interface JudgeRequest {
   concept?: string
 }
 
+export interface CodeVariable {
+  name: string
+  type: string
+  value: string
+  size?: number | null
+}
+
+export interface CodeExecutionResult {
+  success: boolean
+  stdout: string
+  stderr: string
+  violations: string[]
+  variables?: CodeVariable[]
+  execution_time?: number
+}
+
 export interface ResourceVersion {
   version_id: string
   resource_id: string
@@ -121,6 +143,23 @@ export interface ResourceVersion {
   triggered_by: string
   content_snapshot?: any
   created_at: string
+}
+
+export interface ResourceDetail {
+  resource_id?: string
+  task_id?: string
+  session_id?: string
+  concept: string
+  version?: number
+  document?: string
+  mindmap?: string
+  exercises?: Array<Record<string, any>>
+  code_cases?: Array<Record<string, any>>
+  audio_text?: string
+  debate_report?: Record<string, any>
+  status?: string
+  created_at?: string
+  updated_at?: string
 }
 
 export interface ThinkingStep {
@@ -141,6 +180,11 @@ export const resourceApi = {
   getVersions: (concept: string) =>
     api.get<{ concept: string; versions: ResourceVersion[] }>(`/resources/versions?concept=${encodeURIComponent(concept)}`),
 
+  getLatest: (concept: string) =>
+    api.get<{ concept: string; has_resource: boolean; resource: ResourceDetail | null }>(
+      `/resources/latest?concept=${encodeURIComponent(concept)}`
+    ),
+
   getThinkingPath: (concept: string) =>
     api.get<{ concept: string; steps: ThinkingStep[] }>(`/resources/thinking-path?concept=${encodeURIComponent(concept)}`),
 
@@ -150,7 +194,7 @@ export const resourceApi = {
 
 // 代码判题相关接口
 export const codeApi = {
-  execute: (code: string) => api.post('/code/execute', { code }),
+  execute: (code: string) => api.post<CodeExecutionResult>('/code/execute', { code }),
   judge: (data: JudgeRequest) => api.post('/code/judge', data),
   judgeExercise: (data: JudgeRequest) => api.post('/code/judge-exercise', data),
 }
@@ -170,8 +214,10 @@ export const behaviorApi = {
 export const evaluationApi = {
   getHeatmap: (sessionId: string) =>
     api.get(`/evaluation/heatmap?session_id=${sessionId}`),
-  getBkt: (sessionId: string) =>
-    api.get(`/evaluation/bkt?session_id=${sessionId}`),
+  getBkt: (sessionId: string, concept?: string) =>
+    api.get('/evaluation/bkt', {
+      params: { session_id: sessionId, concept },
+    }),
   analyze: (sessionId: string) =>
     api.post(`/evaluation/analyze?session_id=${sessionId}`),
 }

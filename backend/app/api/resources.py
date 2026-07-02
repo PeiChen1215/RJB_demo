@@ -42,6 +42,7 @@ from app.services.database import (
     create_generation_task,
     create_resource,
     create_session,
+    find_latest_resource_by_concept,
     find_latest_generation_task_by_concept,
     get_resource_versions,
     get_session,
@@ -334,6 +335,16 @@ async def get_resource_version_history(concept: str):
     """获取某知识点的资源版本演进历史（知识熔炉展示用）"""
     versions = get_resource_versions(concept)
     return {"concept": concept, "versions": versions}
+
+
+@router.get("/latest")
+async def get_latest_resource(concept: str):
+    resource = find_latest_resource_by_concept(concept)
+    return {
+        "concept": concept,
+        "has_resource": resource is not None,
+        "resource": resource,
+    }
 
 
 _DEFAULT_THINKING_STEPS = [

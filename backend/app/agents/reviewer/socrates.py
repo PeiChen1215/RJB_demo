@@ -49,14 +49,16 @@ class SocratesTutor(BaseAgent):
         concept = payload.get("concept") or message.context.get("target_concept", "当前知识点")
         error_message = payload.get("error_message", "")
         code = payload.get("code", "")
+        previous_question = payload.get("previous_question", "")
         profile = message.context.get("profile", {})
         depth = message.metadata.get("socratic_depth", 0)
 
-        result = self.generate_question(error_message, code, concept, profile, depth)
+        result = self.generate_question(error_message, code, concept, profile, depth, previous_question)
         return message.reply(result, stage="tutor", from_agent=self.name)
 
     def generate_question(self, error_message: str, code: str, concept: str,
-                          profile: Dict[str, Any], depth: int = 0) -> Dict[str, Any]:
+                          profile: Dict[str, Any], depth: int = 0,
+                          previous_question: str = "") -> Dict[str, Any]:
         # 提问阶段随深度递进，最大到 convergence
         stages = [
             "clarification",
@@ -84,9 +86,13 @@ class SocratesTutor(BaseAgent):
         # 解析失败则使用模板兜底
         if not result:
             result = self._fallback_question(stage, concept, error_message)
+        if previous_question and result.get("question") == previous_question:
+            result = self._fallback_question(stage, concept, error_message)
 
         # 确保必要字段存在：阶段、是否允许直接给答案
         result.setdefault("stage", stage)
+        if not result.get("hint"):
+            result["hint"] = self._fallback_question(stage, concept, error_message).get("hint")
         result.setdefault("can_provide_answer", depth >= 3)
         result["raw"] = raw
         return result

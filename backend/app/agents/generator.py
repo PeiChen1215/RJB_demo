@@ -193,7 +193,7 @@ class GeneratorAgent(BaseAgent):
             else:
                 exercises.append({
                     "question": f"练习 {i - 1}",
-                    "starter_code": code.strip(),
+                    "starter_code": f"# TODO: 完成「{concept}」练习 {i - 1}\n",
                     "expected_output": "",
                     "hints": [],
                     "solution": code.strip(),

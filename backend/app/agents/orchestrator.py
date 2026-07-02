@@ -289,6 +289,9 @@ class AgentOrchestrator:
     def _route(self, msg: AgentMessage, session: Optional[dict] = None) -> AgentMessage:
         """按意图路由到对应流程"""
         intent = msg.intent
+        # 若当前处于苏格拉底辅导中且用户请求继续，优先继续辅导流，避免被普通知识/路径意图抢走。
+        if session and self._is_continue_tutor(msg, session):
+            return self._tutor_flow(msg, session)
         if intent == "KNOWLEDGE_REQUEST":
             return self._knowledge_flow(msg, session)
         if intent == "CODE_HELP":
@@ -297,9 +300,6 @@ class AgentOrchestrator:
             return self._evaluate_flow(msg)
         if intent == "PATH_ADJUST":
             return self._path_adjust_flow(msg)
-        # 若当前处于苏格拉底辅导中且用户请求继续，则继续辅导流
-        if session and self._is_continue_tutor(msg, session):
-            return self._tutor_flow(msg, session)
         # 默认进入聊天/画像更新流程
         return self._safe_run(self.profiler, msg)
 
@@ -358,23 +358,34 @@ class AgentOrchestrator:
     def _tutor_flow(self, msg: AgentMessage, session: Optional[dict] = None) -> AgentMessage:
         """代码求助流程：Reviewer.tutor，支持多轮 depth 递进"""
         user_msg = msg.payload.get("message", "")
-        concept = msg.context.get("target_concept", "当前知识点")
+        previous_tutor = session.get("last_tutor_context", {}) if session else {}
+        concept = msg.context.get("target_concept") or previous_tutor.get("concept") or "当前知识点"
 
         # 从消息中简单提取 Python 代码块与错误描述
         code_match = re.search(r"```python\s*(.*?)\s*```", user_msg, re.DOTALL)
-        code = code_match.group(1) if code_match else "# 学生未提供代码"
+        code = code_match.group(1) if code_match else previous_tutor.get("code") or "# 学生未提供代码"
         error_match = re.search(r"错误[：:]\s*(.+)", user_msg)
-        error = error_match.group(1) if error_match else "请描述你遇到的错误"
+        error = error_match.group(1) if error_match else previous_tutor.get("error_message") or "请描述你遇到的错误"
 
         # 从 session 中读取当前提问深度，实现 5 阶段递进
         depth = 0
         if session:
             depth = session.get("socratic_depth", 0)
+            if self._is_continue_tutor(msg, session) and previous_tutor.get("question"):
+                error = (
+                    f"{error}\n上一轮引导问题：{previous_tutor.get('question')}\n"
+                    "本轮请进入下一阶段，避免重复上一轮问题。"
+                )
 
         tutor_msg = AgentMessage(
             intent=msg.intent,
             stage="tutor",
-            payload={"error_message": error, "code": code, "concept": concept},
+            payload={
+                "error_message": error,
+                "code": code,
+                "concept": concept,
+                "previous_question": previous_tutor.get("question", ""),
+            },
             context=msg.context,
             metadata={"socratic_depth": depth},
             from_agent="user",
@@ -390,6 +401,14 @@ class AgentOrchestrator:
             session["socratic_depth"] = next_depth
 
         question = socratic.get("question") or socratic.get("message") or "你遇到了什么问题？"
+        if session:
+            session["last_tutor_context"] = {
+                "code": code,
+                "error_message": error,
+                "concept": concept,
+                "question": question,
+                "stage": socratic.get("stage"),
+            }
         return msg.reply(
             {
                 "message": question,
@@ -540,10 +559,10 @@ class AgentOrchestrator:
     def _classify_intent(self, message: str) -> str:
         """识别学生意图（简化关键词版，未来可交给 Profiler 或 LLM）"""
         msg = message.lower()
+        if any(w in msg for w in ["错", "报错", "bug", "error", "运行不了", "异常", "traceback"]):
+            return "CODE_HELP"
         if any(w in msg for w in ["学", "讲", "教", "什么是", "怎么", "如何做"]):
             return "KNOWLEDGE_REQUEST"
-        if any(w in msg for w in ["错", "报错", "bug", "error", "运行不了"]):
-            return "CODE_HELP"
         if any(w in msg for w in ["进度", "学得怎么样", "掌握", "测试"]):
             return "PROGRESS_CHECK"
         if any(w in msg for w in ["跳过", "下一个", "换", "不想学"]):
