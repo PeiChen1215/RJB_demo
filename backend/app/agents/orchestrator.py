@@ -50,6 +50,7 @@ from app.agents.profiler import ProfilerAgent
 from app.agents.reviewer import ReviewerAgent
 from app.models.schemas import AgentResponse
 from app.services.database import create_agent_trace
+from app.agents.llm import get_llm_provider
 
 
 # 全局线程池：用于给同步 agent.run 增加超时控制
@@ -372,13 +373,18 @@ class AgentOrchestrator:
 
         # 从 session 中读取当前提问深度，实现 5 阶段递进
         depth = 0
+        history = []
         if session:
             depth = session.get("socratic_depth", 0)
+            history = session.get("socratic_history", [])
+            # 如果是继续引导，把学生当前回复作为上一轮问题的答案记录下来
             if self._is_continue_tutor(msg, session) and previous_tutor.get("question"):
-                error = (
-                    f"{error}\n上一轮引导问题：{previous_tutor.get('question')}\n"
-                    "本轮请进入下一阶段，避免重复上一轮问题。"
-                )
+                history.append({
+                    "question": previous_tutor.get("question"),
+                    "answer": user_msg,
+                    "stage": previous_tutor.get("stage"),
+                })
+                session["socratic_history"] = history[-5:]  # 保留最近 5 轮
 
         tutor_msg = AgentMessage(
             intent=msg.intent,
@@ -388,9 +394,10 @@ class AgentOrchestrator:
                 "code": code,
                 "concept": concept,
                 "previous_question": previous_tutor.get("question", ""),
+                "conversation_history": history,
             },
             context=msg.context,
-            metadata={"socratic_depth": depth},
+            metadata={"socratic_depth": depth, "force_answer": depth >= 4},
             from_agent="user",
         )
         result = self._safe_run(self.reviewer, tutor_msg)
@@ -404,6 +411,10 @@ class AgentOrchestrator:
             session["socratic_depth"] = next_depth
 
         question = socratic.get("question") or socratic.get("message") or "你遇到了什么问题？"
+        answer = socratic.get("answer")
+        if not answer and depth >= 3:
+            answer = socratic.get("hint", "") or f"请检查{concept}的相关语法与用法，参考文档中的示例。"
+
         if session:
             session["last_tutor_context"] = {
                 "code": code,
@@ -418,7 +429,7 @@ class AgentOrchestrator:
                 "question": question,
                 "hint": socratic.get("hint"),
                 "can_provide_answer": socratic.get("can_provide_answer", depth >= 3),
-                "answer": socratic.get("answer"),
+                "answer": answer,
                 "stage": socratic.get("stage"),
             },
             stage="tutor",
@@ -628,7 +639,34 @@ class AgentOrchestrator:
         return any(p in user_msg for p in continue_patterns)
 
     def _classify_intent(self, message: str) -> str:
-        """识别学生意图（简化关键词版，未来可交给 Profiler 或 LLM）"""
+        """识别学生意图：优先用 LLM，失败时回退到关键词匹配"""
+        try:
+            llm = get_llm_provider()
+            prompt = f"""请判断以下学生消息属于哪一类意图，只输出大写意图标签，不要解释。
+可选标签：CODE_HELP（代码求助/报错）、KNOWLEDGE_REQUEST（知识讲解请求）、PROGRESS_CHECK（进度/掌握度查询）、PATH_ADJUST（调整学习路径）、CHAT（闲聊/其他）。
+
+示例：
+"我代码报错了" -> CODE_HELP
+"继续引导我" -> CODE_HELP
+"什么是变量与赋值" -> KNOWLEDGE_REQUEST
+"我学得怎么样了" -> PROGRESS_CHECK
+"不想学这个了" -> PATH_ADJUST
+
+学生消息：{message}
+意图："""
+            response = llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=32,
+            ).strip().upper()
+            allowed = {"CODE_HELP", "KNOWLEDGE_REQUEST", "PROGRESS_CHECK", "PATH_ADJUST", "CHAT"}
+            for label in allowed:
+                if label in response:
+                    return label
+        except Exception:
+            pass
+
+        # 兜底关键词匹配
         msg = message.lower()
         if any(w in msg for w in ["错", "报错", "bug", "error", "运行不了", "异常", "traceback"]):
             return "CODE_HELP"

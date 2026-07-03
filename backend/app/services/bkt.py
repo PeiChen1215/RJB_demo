@@ -111,6 +111,7 @@ class BKTTracker:
 
     def __init__(self):
         self.models: Dict[str, BKTModel] = {}
+        self.last_updated: Dict[str, Optional[str]] = {}
 
     def get_or_create_model(
         self,
@@ -149,6 +150,21 @@ class BKTTracker:
             for concept, model in self.models.items()
         }
 
+    def _is_default_params(self, model: BKTModel) -> bool:
+        """判断模型是否仍在使用默认 BKT 参数"""
+        return (
+            model.observation_count == 0
+            and model.p_init == DEFAULT_PARAMS["p_init"]
+            and model.p_transit == DEFAULT_PARAMS["p_transit"]
+            and model.p_guess == DEFAULT_PARAMS["p_guess"]
+            and model.p_slip == DEFAULT_PARAMS["p_slip"]
+        )
+
+    def _model_explanation(self, model: BKTModel) -> str:
+        if self._is_default_params(model):
+            return "默认参数，尚未有足够练习记录进行校准"
+        return f"基于 {model.observation_count} 次练习记录更新"
+
     def get_heatmap_data(self) -> list:
         """获取热力图数据格式"""
         return [
@@ -156,7 +172,11 @@ class BKTTracker:
                 "concept": concept,
                 "mastery_probability": round(model.probability, 4),
                 "observation_count": model.observation_count,
+                "sample_count": model.observation_count,
                 "is_mastered": model.is_mastered(),
+                "is_default": self._is_default_params(model),
+                "last_updated": self.last_updated.get(concept),
+                "explanation": self._model_explanation(model),
             }
             for concept, model in sorted(
                 self.models.items(), key=lambda x: x[1].probability
@@ -171,6 +191,7 @@ class BKTTracker:
         每次加载前清空当前模型，避免不同会话之间状态串扰。
         """
         self.models.clear()
+        self.last_updated.clear()
 
         # 优先从 mastery_state 恢复
         states = get_mastery_state(session_id)
@@ -179,6 +200,7 @@ class BKTTracker:
             model = self.get_or_create_model(s["concept"])
             model.probability = s["p_known"]
             model.observation_count = s["evidence_count"]
+            self.last_updated[s["concept"]] = s.get("last_updated")
 
         # 从 learning_events 事件补充（处理 mastery_state 未覆盖的情况）
         events = get_session_events(session_id, event_type="exercise_submitted")
@@ -214,10 +236,19 @@ class BKTTracker:
 
     def to_dict(self) -> dict:
         return {
-            "models": [m.to_dict() for m in self.models.values()],
+            "models": [
+                {
+                    **m.to_dict(),
+                    "is_default": self._is_default_params(m),
+                    "last_updated": self.last_updated.get(m.concept),
+                    "explanation": self._model_explanation(m),
+                }
+                for m in self.models.values()
+            ],
             "summary": {
                 "total_concepts": len(self.models),
                 "mastered": sum(1 for m in self.models.values() if m.is_mastered()),
+                "default_count": sum(1 for m in self.models.values() if self._is_default_params(m)),
                 "average_probability": (
                     round(
                         sum(m.probability for m in self.models.values())

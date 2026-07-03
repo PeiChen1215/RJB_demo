@@ -44,7 +44,9 @@ from app.services.database import (
     create_session,
     find_latest_resource_by_concept,
     find_latest_generation_task_by_concept,
+    get_global_error_stats,
     get_resource_versions,
+    get_resource_versions_by_id,
     get_session,
     log_event,
     update_generation_task,
@@ -157,10 +159,34 @@ def _persist_resource_and_debate(task_id: str, session_id: str, result: dict):
 
 
 @router.post("/generate")
-async def generate_resource(concept: str, request: Request):
-    """生成某个知识点的学习资源并执行辩论议会（同步版本）"""
-    session = _get_or_create_session(request)
+async def generate_resource(request: Request, concept: str | None = None):
+    """生成某个知识点的学习资源并执行辩论议会（同步版本）。
+
+    兼容两种调用方式：
+    1. 旧 query 参数：`POST /generate?concept=变量与赋值`
+    2. JSON body：`POST /generate` body={"concept": "...", "session_id": "...", "profile": {...}}
+    """
+    body_profile = None
+    body_session_id = None
+    if not concept:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        concept = body.get("concept")
+        body_session_id = body.get("session_id")
+        body_profile = body.get("profile")
+
+    if not concept:
+        return {"error": "未指定知识点"}
+
+    session = _get_or_create_session(request, body_session_id)
     session_id = session["session_id"]
+
+    if body_profile and isinstance(body_profile, dict):
+        session.setdefault("profile", {})
+        session["profile"].update(body_profile)
+
     task_id = str(uuid.uuid4())
 
     # 创建生成任务记录
@@ -192,11 +218,37 @@ async def generate_resource(concept: str, request: Request):
 
 
 @router.post("/generate-for-session/{session_id}")
-async def generate_resource_for_session(session_id: str, concept: str, request: Request):
-    """为指定会话生成资源（同步版本，兼容旧接口）"""
+async def generate_resource_for_session(
+    session_id: str,
+    request: Request,
+    concept: str | None = None,
+):
+    """为指定会话生成资源（同步版本）。
+
+    兼容两种调用方式：
+    1. 旧 query 参数：`POST /generate-for-session/{session_id}?concept=变量与赋值`
+    2. JSON body：`POST /generate-for-session/{session_id}` body={"concept": "...", "profile": {...}}
+    """
     session = _get_or_create_session(request, session_id)
     if not session:
         return {"error": "会话不存在"}
+
+    body_profile = None
+    if not concept:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        concept = body.get("concept") or session.get("target_concept")
+        body_profile = body.get("profile")
+
+    if not concept:
+        return {"error": "未指定知识点"}
+
+    # 如果请求传入了 profile，临时合并到 session profile 中用于本次生成
+    if body_profile and isinstance(body_profile, dict):
+        session.setdefault("profile", {})
+        session["profile"].update(body_profile)
 
     task_id = str(uuid.uuid4())
     create_generation_task(task_id, session_id, concept, status="pending")
@@ -344,6 +396,41 @@ async def get_latest_resource(concept: str):
         "concept": concept,
         "has_resource": resource is not None,
         "resource": resource,
+    }
+
+
+@router.get("/evolution")
+async def get_resource_evolution(concept: str):
+    """获取某知识点的资源版本演进（含错误率、版本差异、改进原因）"""
+    error_stats = get_global_error_stats(concept)
+    versions = get_resource_versions(concept)
+
+    # 计算相邻版本差异
+    enriched = []
+    for i, v in enumerate(versions):
+        snapshot = v.get("content_snapshot", {})
+        prev = versions[i - 1] if i > 0 else None
+        prev_snapshot = prev.get("content_snapshot", {}) if prev else {}
+        diff = {
+            "document_changed": snapshot.get("document", "") != prev_snapshot.get("document", ""),
+            "exercises_diff": len(snapshot.get("exercises", [])) - len(prev_snapshot.get("exercises", [])),
+            "code_cases_diff": len(snapshot.get("code_cases", [])) - len(prev_snapshot.get("code_cases", [])),
+        }
+        enriched.append({
+            "version": v.get("version"),
+            "resource_id": v.get("resource_id"),
+            "created_at": v.get("created_at"),
+            "triggered_by": v.get("triggered_by"),
+            "change_reason": v.get("change_reason"),
+            "exercises_count": len(snapshot.get("exercises", [])),
+            "code_cases_count": len(snapshot.get("code_cases", [])),
+            "diff": diff,
+        })
+
+    return {
+        "concept": concept,
+        "error_stats": error_stats,
+        "versions": enriched,
     }
 
 

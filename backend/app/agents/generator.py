@@ -87,12 +87,13 @@ class GeneratorAgent(BaseAgent):
 
         # 用解析结果构造 ResourcePackage，缺失字段提供合理默认值
         exercises = self._normalize_exercises(parsed.get("exercises", []), concept)
+        code_cases = self._normalize_code_cases(parsed.get("code_cases", []))
         package = ResourcePackage(
             concept=concept,
             document=parsed.get("document", raw),
             mindmap=parsed.get("mindmap", self._generate_mindmap(concept, concept_info)),
             exercises=exercises,
-            code_cases=parsed.get("code_cases", []),
+            code_cases=code_cases,
             audio_text=parsed.get(
                 "audio_text",
                 f"欢迎来到智学蜂巢。本节我们学习「{concept}」。{concept_info.get('description', '')}",
@@ -115,8 +116,12 @@ class GeneratorAgent(BaseAgent):
             concept=concept,
             document=parsed.get("document", current_package.get("document", raw)),
             mindmap=parsed.get("mindmap", current_package.get("mindmap", "")),
-            exercises=parsed.get("exercises", current_package.get("exercises", [])),
-            code_cases=parsed.get("code_cases", current_package.get("code_cases", [])),
+            exercises=self._normalize_exercises(
+                parsed.get("exercises", current_package.get("exercises", [])), concept
+            ),
+            code_cases=self._normalize_code_cases(
+                parsed.get("code_cases", current_package.get("code_cases", []))
+            ),
             audio_text=parsed.get("audio_text", current_package.get("audio_text", "")),
         )
 
@@ -232,6 +237,34 @@ class GeneratorAgent(BaseAgent):
                 "expected_output": expected,
                 "hints": hints if isinstance(hints, list) else [hints] if hints else [],
                 "solution": solution,
+            })
+        return normalized
+
+    def _normalize_code_cases(self, code_cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """校验代码案例是否可运行，并标记运行结果。"""
+        normalized = []
+        executor = CodeExecutor(timeout=5.0)
+        for case in code_cases:
+            title = case.get("title") or "代码案例"
+            code = case.get("code") or ""
+            explanation = case.get("explanation") or ""
+            run_result = {"runnable": False, "stdout": "", "stderr": ""}
+            if code.strip():
+                try:
+                    result = executor.execute(code)
+                    run_result = {
+                        "runnable": result.get("success", False),
+                        "stdout": result.get("stdout", ""),
+                        "stderr": result.get("stderr", ""),
+                    }
+                except Exception as e:
+                    run_result["stderr"] = str(e)
+            normalized.append({
+                "title": title,
+                "code": code,
+                "explanation": explanation,
+                "runnable": run_result["runnable"],
+                "run_result": run_result,
             })
         return normalized
 

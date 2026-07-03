@@ -15,6 +15,11 @@ import json
 import os
 import sys
 
+import pytest
+
+if not os.environ.get("DEEPSEEK_API_KEY"):
+    pytest.skip("DEEPSEEK_API_KEY not configured", allow_module_level=True)
+
 os.environ["GRAPH_BACKEND"] = "memory"
 os.environ["LLM_PROVIDER"] = "deepseek"
 

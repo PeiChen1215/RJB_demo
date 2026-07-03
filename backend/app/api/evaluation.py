@@ -65,11 +65,16 @@ async def get_bkt_status(
     if concept:
         # 只返回指定知识点
         mastery = tracker.get_mastery_probability(concept)
+        model = tracker.get_or_create_model(concept)
         return {
             "session_id": session_id,
             "concept": concept,
             "mastery_probability": round(mastery, 4),
-            "bkt_params": tracker.get_or_create_model(concept).to_dict(),
+            "sample_count": model.observation_count,
+            "is_default": tracker._is_default_params(model),
+            "last_updated": tracker.last_updated.get(concept),
+            "explanation": tracker._model_explanation(model),
+            "bkt_params": model.to_dict(),
         }
 
     return {

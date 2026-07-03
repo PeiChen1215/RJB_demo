@@ -20,7 +20,7 @@ TODO:
 """
 import json
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.agents.base import AgentMessage, BaseAgent
 
@@ -50,15 +50,22 @@ class SocratesTutor(BaseAgent):
         error_message = payload.get("error_message", "")
         code = payload.get("code", "")
         previous_question = payload.get("previous_question", "")
+        conversation_history = payload.get("conversation_history", [])
         profile = message.context.get("profile", {})
         depth = message.metadata.get("socratic_depth", 0)
+        force_answer = message.metadata.get("force_answer", False)
 
-        result = self.generate_question(error_message, code, concept, profile, depth, previous_question)
+        result = self.generate_question(
+            error_message, code, concept, profile, depth, previous_question,
+            conversation_history, force_answer,
+        )
         return message.reply(result, stage="tutor", from_agent=self.name)
 
     def generate_question(self, error_message: str, code: str, concept: str,
                           profile: Dict[str, Any], depth: int = 0,
-                          previous_question: str = "") -> Dict[str, Any]:
+                          previous_question: str = "",
+                          conversation_history: Optional[List[Dict[str, str]]] = None,
+                          force_answer: bool = False) -> Dict[str, Any]:
         # 提问阶段随深度递进，最大到 convergence
         stages = [
             "clarification",
@@ -68,6 +75,18 @@ class SocratesTutor(BaseAgent):
             "convergence",
         ]
         stage = stages[min(depth, len(stages) - 1)]
+        conversation_history = conversation_history or []
+
+        history_text = ""
+        if conversation_history:
+            history_text = "\n前面的师生对话：\n" + "\n".join(
+                f"老师：{h.get('question')}\n学生：{h.get('answer')}"
+                for h in conversation_history[-3:]
+            )
+
+        answer_requirement = ""
+        if force_answer or stage == "convergence":
+            answer_requirement = "\n当前阶段需要给出最终答案：请用简洁的语言说明错误原因和正确写法，answer 字段不能为空。"
 
         prompt = f"""学生当前知识点：{concept}
 学生代码：
@@ -76,8 +95,10 @@ class SocratesTutor(BaseAgent):
 ```
 错误信息：{error_message}
 学生画像：{json.dumps(profile, ensure_ascii=False)}
+{history_text}
 
 当前提问阶段：{stage}
+{answer_requirement}
 请输出一个引导性提问 JSON。"""
 
         raw = self.think(prompt)
@@ -94,6 +115,8 @@ class SocratesTutor(BaseAgent):
         if not result.get("hint"):
             result["hint"] = self._fallback_question(stage, concept, error_message).get("hint")
         result.setdefault("can_provide_answer", depth >= 3)
+        if (force_answer or stage == "convergence") and not result.get("answer"):
+            result["answer"] = f"{concept} 的常见错误是：{error_message}。建议对照文档示例检查语法与变量使用。"
         result["raw"] = raw
         return result
 

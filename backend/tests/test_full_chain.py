@@ -19,6 +19,9 @@ import time
 
 import pytest
 
+if not os.environ.get("DEEPSEEK_API_KEY"):
+    pytest.skip("DEEPSEEK_API_KEY not configured", allow_module_level=True)
+
 # 使用内存图（无需 Docker Neo4j）
 os.environ["GRAPH_BACKEND"] = "memory"
 # 使用已接入的 DeepSeek

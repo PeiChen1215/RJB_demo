@@ -106,12 +106,20 @@ export const sessionApi = {
     fetch(`/api/sessions/${sessionId}/chat-stream?message=${encodeURIComponent(message)}&message_type=${messageType}`),
 }
 
-// 知识图谱相关接口：全图、学习路径、概念详情
+// 知识图谱相关接口：全图、布局、个人路径、概念详情
 export const graphApi = {
   getGraph: () => api.get<GraphData>('/graph/'),
+  getLayout: () =>
+    api.get<{ nodes: Array<{ id: string; name: string; module: string; difficulty: number; x: number; y: number; color: string }>; edges: GraphData['edges'] }>(
+      '/graph/layout'
+    ),
   getPath: (fromConcepts: string[], toConcept: string) =>
     api.get('/graph/path', {
       params: { from_concepts: fromConcepts.join(','), to_concept: toConcept },
+    }),
+  getPersonalPath: (sessionId: string, targetConcept?: string) =>
+    api.get('/graph/path', {
+      params: { session_id: sessionId, target_concept: targetConcept },
     }),
   getConcept: (name: string) => api.get(`/graph/concept/${name}`),
 }
@@ -177,13 +185,21 @@ export interface ThinkingStep {
 // 学习资源相关接口：同步生成、流式生成、版本演进、思维路径、失败提交种子
 export const resourceApi = {
   generate: (concept: string, profile?: any) =>
-    api.post('/resources/generate', null, { params: { concept, profile } }),
+    api.post('/resources/generate', { concept, profile }),
+
+  generateForSession: (sessionId: string, concept: string, profile?: any) =>
+    api.post(`/resources/generate-for-session/${sessionId}`, { concept, profile }),
 
   generateStream: (sessionId: string, concept: string) =>
     fetch(`/api/resources/stream-generate?session_id=${sessionId}&concept=${encodeURIComponent(concept)}`),
 
   getVersions: (concept: string) =>
     api.get<{ concept: string; versions: ResourceVersion[] }>(`/resources/versions?concept=${encodeURIComponent(concept)}`),
+
+  getEvolution: (concept: string) =>
+    api.get<{ concept: string; error_stats: any; versions: any[] }>(
+      `/resources/evolution?concept=${encodeURIComponent(concept)}`
+    ),
 
   getLatest: (concept: string) =>
     api.get<{ concept: string; has_resource: boolean; resource: ResourceDetail | null }>(

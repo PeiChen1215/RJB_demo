@@ -27,6 +27,8 @@ TODO:
 """
 import hashlib
 import json
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -35,7 +37,7 @@ from app.agents.reviewer.debate_council import DebateCouncil
 from app.agents.reviewer.evaluator import LearningEvaluator
 from app.agents.reviewer.socrates import SocratesTutor
 from app.models.schemas import DebateReport, ResourcePackage
-from app.services.database import get_db
+from app.services.database import create_agent_trace, get_db
 
 
 class ReviewerAgent(BaseAgent):
@@ -51,6 +53,28 @@ class ReviewerAgent(BaseAgent):
         self.evaluator = LearningEvaluator()
         # 初始化时确保缓存表存在
         self._ensure_cache_table()
+
+    def _trace_sub_stage(self, session_id: str, sub_agent: str, stage: str,
+                         intent: str, status: str, started_at: str,
+                         duration_ms: int, error_message: str = ""):
+        """记录 Reviewer 内部子阶段（Debate/Socrates/Evaluator）到 agent_traces"""
+        if not session_id:
+            return
+        try:
+            create_agent_trace(
+                session_id=session_id,
+                trace_id=str(uuid.uuid4()),
+                agent_name=f"Reviewer/{sub_agent}",
+                stage=stage,
+                intent=intent,
+                status=status,
+                started_at=started_at,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                duration_ms=duration_ms,
+                error_message=error_message,
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # 统一入口
@@ -120,13 +144,34 @@ class ReviewerAgent(BaseAgent):
         if mode is None:
             mode = self._select_review_mode(package, concept, all_forbidden)
 
-        if mode == "fast":
-            report = self.debate_council.fast_review(package, concept_info, all_forbidden)
-        else:
-            report = self.debate_council.debate(package, concept_info, all_forbidden)
-            # 如果被拒绝，尝试调用 Generator 修订后重新审核一次
-            if report.status == "REJECTED":
-                report = self._revise_and_re_debate(package, concept_info, all_forbidden, profile)
+        session_id = message.context.get("session_id", "")
+        sub_started = datetime.now(timezone.utc).isoformat()
+        sub_start_ts = time.monotonic()
+        sub_status = "success"
+        sub_error = ""
+        try:
+            if mode == "fast":
+                report = self.debate_council.fast_review(package, concept_info, all_forbidden)
+            else:
+                report = self.debate_council.debate(package, concept_info, all_forbidden)
+                # 如果被拒绝，尝试调用 Generator 修订后重新审核一次
+                if report.status == "REJECTED":
+                    report = self._revise_and_re_debate(package, concept_info, all_forbidden, profile)
+        except Exception as e:
+            sub_status = "failed"
+            sub_error = str(e)
+            raise
+        finally:
+            self._trace_sub_stage(
+                session_id=session_id,
+                sub_agent="Debate" if mode == "full" else "Guardian",
+                stage="reviewer",
+                intent=message.intent,
+                status=sub_status,
+                started_at=sub_started,
+                duration_ms=int((time.monotonic() - sub_start_ts) * 1000),
+                error_message=sub_error,
+            )
 
         # 4. 缓存通过的审核结果，减少重复 LLM 调用
         if report.status in ("PASSED", "MODIFIED"):
@@ -177,14 +222,56 @@ class ReviewerAgent(BaseAgent):
     # ------------------------------------------------------------------
     def tutor(self, message: AgentMessage) -> AgentMessage:
         """苏格拉底式辅导"""
-        return self.socrates.run(message)
+        session_id = message.context.get("session_id", "")
+        sub_started = datetime.now(timezone.utc).isoformat()
+        sub_start_ts = time.monotonic()
+        sub_status = "success"
+        sub_error = ""
+        try:
+            return self.socrates.run(message)
+        except Exception as e:
+            sub_status = "failed"
+            sub_error = str(e)
+            raise
+        finally:
+            self._trace_sub_stage(
+                session_id=session_id,
+                sub_agent="Socrates",
+                stage="tutor",
+                intent=message.intent,
+                status=sub_status,
+                started_at=sub_started,
+                duration_ms=int((time.monotonic() - sub_start_ts) * 1000),
+                error_message=sub_error,
+            )
 
     # ------------------------------------------------------------------
     # 学习评估
     # ------------------------------------------------------------------
     def evaluate(self, message: AgentMessage) -> AgentMessage:
         """学习效果评估"""
-        return self.evaluator.run(message)
+        session_id = message.context.get("session_id", "")
+        sub_started = datetime.now(timezone.utc).isoformat()
+        sub_start_ts = time.monotonic()
+        sub_status = "success"
+        sub_error = ""
+        try:
+            return self.evaluator.run(message)
+        except Exception as e:
+            sub_status = "failed"
+            sub_error = str(e)
+            raise
+        finally:
+            self._trace_sub_stage(
+                session_id=session_id,
+                sub_agent="Evaluator",
+                stage="evaluator",
+                intent=message.intent,
+                status=sub_status,
+                started_at=sub_started,
+                duration_ms=int((time.monotonic() - sub_start_ts) * 1000),
+                error_message=sub_error,
+            )
 
     # ------------------------------------------------------------------
     # 辩论缓存（SQLite 内）
