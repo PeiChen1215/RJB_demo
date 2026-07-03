@@ -51,10 +51,14 @@ from app.models.schemas import (
 )
 from app.services.database import (
     create_session,
+    get_agent_traces,
+    get_daily_learning_minutes,
     get_db,
+    get_profile_confidence,
     get_session,
     get_session_events,
     get_session_stats,
+    get_streak_days,
     log_behavior_event as log_behavior_evidence,
     log_event,
     update_session,
@@ -264,7 +268,8 @@ async def get_profile_evidence(session_id: str, request: Request):
     for dim in grouped:
         grouped[dim].sort(key=lambda x: x["created_at"] or "", reverse=True)
         grouped[dim] = grouped[dim][:5]
-    return {"session_id": session_id, "evidence": grouped}
+    confidence = get_profile_confidence(session_id)
+    return {"session_id": session_id, "evidence": grouped, "confidence": confidence}
 
 
 @router.get("/{session_id}/stats")
@@ -273,7 +278,20 @@ async def get_session_stats_endpoint(session_id: str, request: Request):
     session = _load_session(request.app, session_id)
     if not session:
         return {"error": "会话不存在"}
-    return get_session_stats(session_id)
+    stats = get_session_stats(session_id)
+    stats["daily_learning_minutes"] = get_daily_learning_minutes(session_id)
+    stats["streak_days"] = get_streak_days(session_id)
+    return stats
+
+
+@router.get("/{session_id}/agent-trace")
+async def get_session_agent_trace(session_id: str, request: Request, limit: int = 20):
+    """获取会话 Agent 执行链路"""
+    session = _load_session(request.app, session_id)
+    if not session:
+        return {"error": "会话不存在"}
+    traces = get_agent_traces(session_id, limit=limit)
+    return {"session_id": session_id, "traces": traces}
 
 
 @router.get("/{session_id}/events")

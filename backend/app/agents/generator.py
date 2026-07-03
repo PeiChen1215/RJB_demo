@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 
 from app.agents.base import AgentMessage, BaseAgent
 from app.models.schemas import ResourcePackage
+from app.services.code_executor import CodeExecutor
 from app.services.graph_factory import get_graph_store
 
 
@@ -85,11 +86,12 @@ class GeneratorAgent(BaseAgent):
             parsed = self._fallback_parse(concept, raw)
 
         # 用解析结果构造 ResourcePackage，缺失字段提供合理默认值
+        exercises = self._normalize_exercises(parsed.get("exercises", []), concept)
         package = ResourcePackage(
             concept=concept,
             document=parsed.get("document", raw),
             mindmap=parsed.get("mindmap", self._generate_mindmap(concept, concept_info)),
-            exercises=parsed.get("exercises", []),
+            exercises=exercises,
             code_cases=parsed.get("code_cases", []),
             audio_text=parsed.get(
                 "audio_text",
@@ -148,7 +150,7 @@ class GeneratorAgent(BaseAgent):
 【输出要求】
 1. 概念讲解（Markdown 格式，含 2-3 个代码示例）
 2. 思维导图（Mermaid 语法）
-3. 3 道渐进式编程练习题
+3. 3 道渐进式编程练习题，每题必须给出明确的 expected_output（通过运行 solution 代码能得到的确切输出）
 4. 1-2 个可运行代码实操案例
 5. 常见错误警示
 6. 语音讲解文本（200 字以内）
@@ -204,6 +206,34 @@ class GeneratorAgent(BaseAgent):
             "exercises": exercises,
             "code_cases": code_cases,
         }
+
+    def _normalize_exercises(self, exercises: List[Dict[str, Any]], concept: str) -> List[Dict[str, Any]]:
+        """补齐练习题字段，缺失 expected_output 时尝试执行 solution 推导。"""
+        normalized = []
+        executor = CodeExecutor(timeout=5.0)
+        for ex in exercises:
+            question = ex.get("question") or f"练习：{concept}"
+            starter = ex.get("starter_code") or ""
+            solution = ex.get("solution") or ""
+            hints = ex.get("hints") or []
+            expected = (ex.get("expected_output") or "").strip()
+            if not expected:
+                code_to_run = solution.strip() or starter.strip()
+                if code_to_run:
+                    try:
+                        result = executor.execute(code_to_run)
+                        if result.get("success") and result.get("stdout") is not None:
+                            expected = result["stdout"].strip()
+                    except Exception:
+                        expected = ""
+            normalized.append({
+                "question": question,
+                "starter_code": starter,
+                "expected_output": expected,
+                "hints": hints if isinstance(hints, list) else [hints] if hints else [],
+                "solution": solution,
+            })
+        return normalized
 
     def _generate_mindmap(self, concept: str, concept_info: dict) -> str:
         """基于前置依赖和关联知识点生成简单 Mermaid 思维导图"""

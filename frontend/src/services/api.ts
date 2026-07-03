@@ -87,8 +87,13 @@ export const sessionApi = {
     ),
 
   getProfileEvidence: (sessionId: string) =>
-    api.get<{ session_id: string; evidence: Record<string, EvidenceItem[]> }>(
+    api.get<{ session_id: string; evidence: Record<string, EvidenceItem[]>; confidence: number }>(
       `/sessions/${sessionId}/profile/evidence`
+    ),
+
+  getAgentTrace: (sessionId: string, limit: number = 20) =>
+    api.get<{ session_id: string; traces: any[] }>(
+      `/sessions/${sessionId}/agent-trace?limit=${limit}`
     ),
 
   getStats: (sessionId: string) =>

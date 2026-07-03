@@ -221,6 +221,27 @@ def init_db(db: Database):
         db["resource_feedback"].create_index(["resource_id"], if_not_exists=True)
         db["resource_feedback"].create_index(["concept"], if_not_exists=True)
 
+    # === Agent 执行链路追踪 ===
+    if "agent_traces" not in db.table_names():
+        db["agent_traces"].create({
+            "trace_id": str,
+            "session_id": str,
+            "agent_name": str,
+            "stage": str,
+            "intent": str,
+            "status": str,          # running / success / degraded / failed
+            "started_at": str,
+            "finished_at": str,
+            "duration_ms": int,
+            "is_cached": bool,
+            "is_fallback": bool,
+            "error_message": str,
+            "created_at": str,
+        }, pk="trace_id", if_not_exists=True)
+        db["agent_traces"].create_index(["session_id"], if_not_exists=True)
+        db["agent_traces"].create_index(["agent_name"], if_not_exists=True)
+        db["agent_traces"].create_index(["session_id", "created_at"], if_not_exists=True)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -1050,3 +1071,180 @@ def log_behavior_event(session_id: str, event_type: str, dimension: Optional[str
             weight=weight,
             description=description or f"用户触发了 {event_type} 事件",
         )
+
+
+# =============================================================================
+# 新增：Agent 执行链路追踪
+# =============================================================================
+
+def create_agent_trace(
+    session_id: str,
+    trace_id: str,
+    agent_name: str,
+    stage: str,
+    intent: str,
+    status: str,
+    started_at: str,
+    finished_at: str,
+    duration_ms: int,
+    is_cached: bool = False,
+    is_fallback: bool = False,
+    error_message: str = "",
+):
+    """记录 Agent 执行链路"""
+    db = get_db()
+    try:
+        db["agent_traces"].insert({
+            "trace_id": trace_id,
+            "session_id": session_id,
+            "agent_name": agent_name,
+            "stage": stage,
+            "intent": intent,
+            "status": status,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "duration_ms": duration_ms,
+            "is_cached": is_cached,
+            "is_fallback": is_fallback,
+            "error_message": error_message,
+            "created_at": _now(),
+        }, replace=True)
+    finally:
+        db.conn.close()
+
+
+def get_agent_traces(session_id: str, limit: int = 20) -> List[dict]:
+    """获取某会话的 Agent 执行链路，按时间倒序"""
+    db = get_db()
+    try:
+        rows = list(db["agent_traces"].rows_where(
+            "session_id = ?", [session_id],
+            order_by="created_at DESC",
+            limit=limit,
+        ))
+        return [
+            {
+                "trace_id": r["trace_id"],
+                "agent_name": r["agent_name"],
+                "stage": r["stage"],
+                "intent": r["intent"],
+                "status": r["status"],
+                "started_at": r["started_at"],
+                "finished_at": r["finished_at"],
+                "duration_ms": r["duration_ms"],
+                "is_cached": r["is_cached"],
+                "is_fallback": r["is_fallback"],
+                "error_message": r["error_message"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+    finally:
+        db.conn.close()
+
+
+# =============================================================================
+# 新增：学习时长与连续学习天数
+# =============================================================================
+
+def get_daily_learning_minutes(session_id: str, date: Optional[str] = None) -> int:
+    """计算某日有效学习时长（分钟）
+
+    规则：
+    - 取 date 当天所有 learning_events，按时间排序；
+    - 相邻事件间隔 <= 5 分钟视为同一次学习会话；
+    - 每个会话贡献 min(会话持续分钟数, 30) + 1 分钟；
+    - 单日封顶 120 分钟。
+    """
+    db = get_db()
+    try:
+        if date is None:
+            date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        rows = list(db["learning_events"].rows_where(
+            "session_id = ? AND substr(created_at, 1, 10) = ?",
+            [session_id, date],
+            order_by="created_at ASC",
+        ))
+        if not rows:
+            return 0
+
+        times = [
+            datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
+            for r in rows
+        ]
+
+        total = 0
+        session_start = times[0]
+        session_end = times[0]
+        for t in times[1:]:
+            if (t - session_end).total_seconds() <= 300:  # 5 分钟内合并
+                session_end = t
+            else:
+                duration = max(1, min((session_end - session_start).total_seconds() / 60, 30))
+                total += duration
+                session_start = t
+                session_end = t
+        duration = max(1, min((session_end - session_start).total_seconds() / 60, 30))
+        total += duration
+
+        return min(int(total), 120)
+    finally:
+        db.conn.close()
+
+
+def get_streak_days(session_id: str) -> int:
+    """计算连续学习天数
+
+    从今天往前数，连续有学习事件的自然日天数。
+    """
+    db = get_db()
+    try:
+        rows = list(db["learning_events"].rows_where(
+            "session_id = ?", [session_id],
+            select="substr(created_at, 1, 10) as date",
+            order_by="created_at DESC",
+        ))
+        dates = sorted({r["date"] for r in rows}, reverse=True)
+        if not dates:
+            return 0
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        streak = 0
+        current = datetime.strptime(today, "%Y-%m-%d").date()
+        for date_str in dates:
+            d = datetime.strptime(date_str, "%Y-%m-%d").date()
+            if (current - d).days <= 1:
+                streak += 1
+                current = d
+            else:
+                break
+        return streak
+    finally:
+        db.conn.close()
+
+
+# =============================================================================
+# 新增：画像置信度
+# =============================================================================
+
+def get_profile_confidence(session_id: str) -> float:
+    """计算画像置信度
+
+    基于认知风格证据的维度覆盖度和总权重：
+    - 四个核心维度（cognitive_field / cognitive_modality / learning_pace / goal_orientation）
+      每个有证据贡献 25% 基础分；
+    - 总权重额外加成，最高 30%；
+    - 最终置信度封顶 1.0。
+    """
+    CORE_DIMENSIONS = {"cognitive_field", "cognitive_modality", "learning_pace", "goal_orientation"}
+    evidence = get_cognitive_evidence(session_id)
+    if not evidence:
+        return 0.0
+
+    covered = {e["dimension"] for e in evidence if e["dimension"] in CORE_DIMENSIONS}
+    base = len(covered) / len(CORE_DIMENSIONS)
+    total_weight = sum(float(e.get("weight", 1.0)) for e in evidence)
+    bonus = min(total_weight / 20.0, 0.3)
+
+    return round(min(base * 0.7 + bonus, 1.0), 2)

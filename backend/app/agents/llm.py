@@ -241,7 +241,7 @@ def get_llm_provider() -> BaseLLM:
     2. auto 模式：优先 DeepSeek，其次讯飞星火，最后 Mock
     """
     settings = get_settings()
-    provider = os.environ.get("LLM_PROVIDER", settings.LLM_PROVIDER or "auto").lower()
+    provider = os.environ.get("LLM_PROVIDER", settings.LLM_PROVIDER or "auto").strip().lower()
 
     # 显式指定 provider
     if provider == "deepseek":

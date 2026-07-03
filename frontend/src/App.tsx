@@ -484,6 +484,7 @@ function App() {
   const [activeNav, setActiveNav] = useState<NavKey>('graph')
   const [session, setSession] = useState<SessionResponse | null>(null)
   const [stats, setStats] = useState<SessionStats | null>(null)
+  const [agentTraces, setAgentTraces] = useState<any[]>([])
   const [graph, setGraph] = useState<GraphData | null>(null)
   const [heatmap, setHeatmap] = useState<HeatmapItem[]>([])
   const [health, setHealth] = useState<HealthDetail | null>(null)
@@ -608,6 +609,22 @@ function App() {
 
     loadLearningSignals()
     const timer = window.setInterval(loadLearningSignals, 6000)
+    return () => window.clearInterval(timer)
+  }, [session])
+
+  useEffect(() => {
+    if (!session) return
+    const sessionId = session.session_id
+    async function loadAgentTraces() {
+      try {
+        const res = await sessionApi.getAgentTrace(sessionId)
+        setAgentTraces(res.data.traces || [])
+      } catch {
+        setAgentTraces([])
+      }
+    }
+    loadAgentTraces()
+    const timer = window.setInterval(loadAgentTraces, 6000)
     return () => window.clearInterval(timer)
   }, [session])
 
@@ -1089,8 +1106,8 @@ function App() {
           <section className="module-page flex-1">
             {activeNav === 'profile' && (
               <div className="module-grid profile-page">
-                <ProfilePanel session={session} masteredCount={masteredCount} targetConcept={targetConcept} stats={stats} />
-                <AgentPanel onAgentAction={runAgentAction} />
+                <ProfilePanel session={session} masteredCount={masteredCount} targetConcept={targetConcept} stats={stats} totalConcepts={graphConcepts.size} />
+                <AgentPanel onAgentAction={runAgentAction} traces={agentTraces} />
                 <WorkspaceDock
                   activeNav={activeNav}
                   selectedConcept={selectedConcept}
@@ -2271,11 +2288,12 @@ function CodeCommand({
   )
 }
 
-function ProfilePanel({ session, masteredCount, targetConcept, stats }: { session: SessionResponse | null; masteredCount: number; targetConcept: string; stats: SessionStats | null }) {
+function ProfilePanel({ session, masteredCount, targetConcept, stats, totalConcepts }: { session: SessionResponse | null; masteredCount: number; targetConcept: string; stats: SessionStats | null; totalConcepts: number }) {
   const profile = session?.profile
   const [expanded, setExpanded] = useState(false)
   const [evidence, setEvidence] = useState<Record<string, EvidenceItem[]>>({})
   const [evidenceOpen, setEvidenceOpen] = useState(false)
+  const [confidence, setConfidence] = useState(0)
   const modality = profile?.cognitive_modality === 'auditory' ? '听觉型' : profile?.cognitive_modality === 'kinesthetic' ? '动觉型' : '视觉型'
   const field = profile?.cognitive_field === 'independent' ? '场独立' : '场依存'
 
@@ -2283,8 +2301,14 @@ function ProfilePanel({ session, masteredCount, targetConcept, stats }: { sessio
     if (!session?.session_id) return
     sessionApi
       .getProfileEvidence(session.session_id)
-      .then((res) => setEvidence(res.data.evidence || {}))
-      .catch(() => setEvidence({}))
+      .then((res) => {
+        setEvidence(res.data.evidence || {})
+        setConfidence(res.data.confidence ?? 0)
+      })
+      .catch(() => {
+        setEvidence({})
+        setConfidence(0)
+      })
   }, [session?.session_id, stats?.chat_count])
 
   return (
@@ -2376,11 +2400,11 @@ function ProfilePanel({ session, masteredCount, targetConcept, stats }: { sessio
       <div className="profile-insight-strip">
         <div>
           <span>画像置信度</span>
-          <strong>{session ? '92%' : '待同步'}</strong>
+          <strong>{session ? `${Math.round(confidence * 100)}%` : '待同步'}</strong>
         </div>
         <div>
           <span>学习轨迹</span>
-          <strong>{masteredCount} / {Math.max(masteredCount + 4, 8)}</strong>
+          <strong>{masteredCount} / {totalConcepts > 0 ? totalConcepts : '--'}</strong>
         </div>
         <div>
           <span>推荐干预</span>
@@ -2391,45 +2415,65 @@ function ProfilePanel({ session, masteredCount, targetConcept, stats }: { sessio
   )
 }
 
-function AgentPanel({ onAgentAction }: { onAgentAction: (agentName: string) => void }) {
-  const workingCount = AGENTS.filter((agent) => agent.status === 'working').length
+function AgentPanel({ onAgentAction, traces }: { onAgentAction: (agentName: string) => void; traces: any[] }) {
+  const latestByAgent = useMemo(() => {
+    const map: Record<string, any> = {}
+    for (const trace of traces) {
+      const name = trace.agent_name
+      if (!map[name] || (trace.created_at && trace.created_at > map[name].created_at)) {
+        map[name] = trace
+      }
+    }
+    return map
+  }, [traces])
+
+  const runningCount = useMemo(() => traces.filter((t) => t.status === 'running').length, [traces])
 
   return (
     <Panel className="agent-panel min-h-[230px]">
       <PanelHeader title="Agent 协作" icon={Sparkles} meta={<span className="flex items-center gap-2 text-xs text-emerald-300"><span className="h-2 w-2 rounded-full bg-emerald-400" />5/5 在线</span>} />
       <div className="agent-list">
-        {AGENTS.map((agent, index) => (
-          <motion.button
-            type="button"
-            onClick={() => onAgentAction(agent.name)}
-            key={agent.name}
-            className={cn('agent-row text-left', agent.accent)}
-            initial={{ opacity: 0, x: 16 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: index * 0.08 }}
-          >
-            <HexAvatar icon={index === 3 ? ShieldCheck : Brain} tone={agent.accent === 'amber' ? 'amber' : 'mint'} small />
-            <strong>{agent.name}</strong>
-            <span>{agent.job}</span>
-            <div className="agent-pulses">
-              {Array.from({ length: 5 }).map((_, pulseIndex) => (
-                <i key={pulseIndex} className={pulseIndex < (agent.status === 'working' ? 2 : 4) ? 'on' : ''} />
-              ))}
-            </div>
-            <em title="本轮协作响应耗时">{agent.time}</em>
-          </motion.button>
-        ))}
+        {AGENTS.map((agent, index) => {
+          const trace = latestByAgent[agent.name]
+          const status = trace?.status === 'running' ? 'working' : trace?.status === 'failed' ? 'error' : trace ? 'online' : 'online'
+          const timeText = trace ? `${trace.duration_ms}ms` : '空闲'
+          return (
+            <motion.button
+              type="button"
+              onClick={() => onAgentAction(agent.name)}
+              key={agent.name}
+              className={cn('agent-row text-left', agent.accent)}
+              initial={{ opacity: 0, x: 16 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: index * 0.08 }}
+            >
+              <HexAvatar icon={index === 3 ? ShieldCheck : Brain} tone={agent.accent === 'amber' ? 'amber' : 'mint'} small />
+              <strong>{agent.name}</strong>
+              <span>{trace ? `${trace.stage || agent.job}` : agent.job}</span>
+              <div className="agent-pulses">
+                {Array.from({ length: 5 }).map((_, pulseIndex) => (
+                  <i key={pulseIndex} className={pulseIndex < (status === 'working' ? 2 : status === 'error' ? 1 : 4) ? 'on' : ''} />
+                ))}
+              </div>
+              <em title="最近调用耗时">{timeText}</em>
+            </motion.button>
+          )
+        })}
       </div>
       <div className="agent-insight-board">
         <div className="agent-orbit">
-          {AGENTS.map((agent, index) => (
-            <span key={agent.name} className={cn(agent.accent, agent.status === 'working' && 'working')} style={{ '--agent-index': index } as Record<string, number>} />
-          ))}
+          {AGENTS.map((agent, index) => {
+            const trace = latestByAgent[agent.name]
+            const status = trace?.status === 'running' ? 'working' : trace?.status === 'failed' ? 'error' : trace ? 'online' : 'online'
+            return (
+              <span key={agent.name} className={cn(agent.accent, status === 'working' && 'working', status === 'error' && 'error')} style={{ '--agent-index': index } as Record<string, number>} />
+            )
+          })}
           <strong>协作中枢</strong>
         </div>
         <div className="agent-metrics">
-          <p><span>活跃任务</span><strong>{workingCount || 1}</strong></p>
-          <p><span>链路状态</span><strong>稳定</strong></p>
+          <p><span>活跃任务</span><strong>{runningCount || 0}</strong></p>
+          <p><span>链路状态</span><strong>{traces.some((t) => t.status === 'failed') ? '存在降级' : '稳定'}</strong></p>
           <p><span>本轮策略</span><strong>画像-路径-反馈</strong></p>
         </div>
       </div>

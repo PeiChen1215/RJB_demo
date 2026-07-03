@@ -39,6 +39,8 @@ import concurrent.futures
 import re
 import threading
 import time
+import uuid
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from app.agents.base import AgentMessage, BaseAgent
@@ -47,6 +49,7 @@ from app.agents.navigator import NavigatorAgent
 from app.agents.profiler import ProfilerAgent
 from app.agents.reviewer import ReviewerAgent
 from app.models.schemas import AgentResponse
+from app.services.database import create_agent_trace
 
 
 # 全局线程池：用于给同步 agent.run 增加超时控制
@@ -472,17 +475,51 @@ class AgentOrchestrator:
         if breaker.is_open(agent.name):
             return self._fallback_message(agent, msg, reason="circuit_open")
 
+        trace_id = str(uuid.uuid4())
+        session_id = msg.context.get("session_id", "")
+        started_at = datetime.now(timezone.utc).isoformat()
+        start_ts = time.monotonic()
+        status = "success"
+        error_message = ""
+
         try:
             future = _AGENT_EXECUTOR.submit(agent.run, msg)
             result = future.result(timeout=timeout)
             breaker.record_success(agent.name)
+            if result.payload.get("fallback"):
+                status = "degraded"
+                error_message = result.payload.get("reason", "")
             return result
         except TimeoutError:
             breaker.record_failure(agent.name)
+            status = "failed"
+            error_message = "timeout"
             return self._fallback_message(agent, msg, reason="timeout")
         except Exception as e:
             breaker.record_failure(agent.name)
+            status = "failed"
+            error_message = str(e)
             return self._fallback_message(agent, msg, reason="exception", error=str(e))
+        finally:
+            finished_at = datetime.now(timezone.utc).isoformat()
+            duration_ms = int((time.monotonic() - start_ts) * 1000)
+            if session_id:
+                try:
+                    create_agent_trace(
+                        session_id=session_id,
+                        trace_id=trace_id,
+                        agent_name=agent.name,
+                        stage=msg.stage,
+                        intent=msg.intent,
+                        status=status,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        duration_ms=duration_ms,
+                        is_fallback=status == "degraded",
+                        error_message=error_message,
+                    )
+                except Exception:
+                    pass
 
     async def _safe_run_async(
         self, agent: BaseAgent, msg: AgentMessage, timeout: float = 30.0
@@ -492,18 +529,52 @@ class AgentOrchestrator:
         if breaker.is_open(agent.name):
             return self._fallback_message(agent, msg, reason="circuit_open")
 
+        trace_id = str(uuid.uuid4())
+        session_id = msg.context.get("session_id", "")
+        started_at = datetime.now(timezone.utc).isoformat()
+        start_ts = time.monotonic()
+        status = "success"
+        error_message = ""
+
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(agent.run, msg), timeout=timeout
             )
             breaker.record_success(agent.name)
+            if result.payload.get("fallback"):
+                status = "degraded"
+                error_message = result.payload.get("reason", "")
             return result
         except TimeoutError:
             breaker.record_failure(agent.name)
+            status = "failed"
+            error_message = "timeout"
             return self._fallback_message(agent, msg, reason="timeout")
         except Exception as e:
             breaker.record_failure(agent.name)
+            status = "failed"
+            error_message = str(e)
             return self._fallback_message(agent, msg, reason="exception", error=str(e))
+        finally:
+            finished_at = datetime.now(timezone.utc).isoformat()
+            duration_ms = int((time.monotonic() - start_ts) * 1000)
+            if session_id:
+                try:
+                    create_agent_trace(
+                        session_id=session_id,
+                        trace_id=trace_id,
+                        agent_name=agent.name,
+                        stage=msg.stage,
+                        intent=msg.intent,
+                        status=status,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        duration_ms=duration_ms,
+                        is_fallback=status == "degraded",
+                        error_message=error_message,
+                    )
+                except Exception:
+                    pass
 
     def _fallback_message(
         self,
