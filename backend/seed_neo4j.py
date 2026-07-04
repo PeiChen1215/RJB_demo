@@ -11,6 +11,74 @@ from app.core.config import get_settings
 from app.services.neo4j_client import Neo4jClient
 
 
+def _split_cypher_statements(content: str) -> list:
+    """按顶层分号分割 Cypher 语句，忽略字符串/括号/注释内部的分号。"""
+    # 先移除行级注释 // ...
+    lines = []
+    for line in content.splitlines():
+        # 注意不破坏字符串里的 //，这里简单处理：只在非字符串位置截断
+        in_string = False
+        string_char = None
+        cleaned = []
+        for ch in line:
+            if in_string:
+                cleaned.append(ch)
+                if ch == string_char:
+                    in_string = False
+            else:
+                if ch in ('"', "'"):
+                    in_string = True
+                    string_char = ch
+                    cleaned.append(ch)
+                elif ch == "/" and len(cleaned) > 0 and cleaned[-1] == "/":
+                    cleaned.pop()
+                    break
+                else:
+                    cleaned.append(ch)
+        lines.append("".join(cleaned))
+
+    text = "\n".join(lines)
+    statements = []
+    current = []
+    in_string = False
+    string_char = None
+    depth = 0
+    for ch in text:
+        if in_string:
+            current.append(ch)
+            if ch == string_char:
+                in_string = False
+        else:
+            if ch in ('"', "'"):
+                in_string = True
+                string_char = ch
+                current.append(ch)
+            elif ch == "(":
+                depth += 1
+                current.append(ch)
+            elif ch == ")":
+                depth -= 1
+                current.append(ch)
+            elif ch == "[":
+                depth += 1
+                current.append(ch)
+            elif ch == "]":
+                depth -= 1
+                current.append(ch)
+            elif ch == ";" and depth == 0:
+                stmt = "".join(current).strip()
+                if stmt:
+                    statements.append(stmt)
+                current = []
+            else:
+                current.append(ch)
+    if current:
+        stmt = "".join(current).strip()
+        if stmt:
+            statements.append(stmt)
+    return statements
+
+
 def seed_from_cypher(file_path: str):
     """从 Cypher 文件导入数据"""
     client = Neo4jClient()
@@ -21,8 +89,7 @@ def seed_from_cypher(file_path: str):
     with open(file_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # 按分号分割多个语句
-    statements = [s.strip() for s in content.split(";") if s.strip()]
+    statements = _split_cypher_statements(content)
 
     with client.driver.session() as session:
         for statement in statements:

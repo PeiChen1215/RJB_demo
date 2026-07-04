@@ -50,14 +50,18 @@ def trigger_resource_review(
     concept: str,
     triggered_by: str = "error_rate",
     reason: str = "知识点代码提交错误率超过阈值，自动触发资源重审",
+    force: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """触发资源重审并保存新版本。
 
-    返回 None 表示未满足触发条件；否则返回重审任务元信息。
+    返回 None 表示未满足触发条件（force=True 时不做阈值判断）；
+    否则返回重审任务元信息。
     """
-    should, stats = should_trigger_resource_review(concept)
-    if not should:
-        return None
+    stats = {"total_submissions": 0, "error_rate": 0.0}
+    if not force:
+        should, stats = should_trigger_resource_review(concept)
+        if not should:
+            return None
 
     latest = find_latest_resource_by_concept(concept)
     if not latest:

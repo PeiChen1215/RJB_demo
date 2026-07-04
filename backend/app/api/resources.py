@@ -36,8 +36,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from app.agents.orchestrator import AgentOrchestrator
-from app.models.schemas import StudentProfile
+from app.models.schemas import ResourceFeedback, StudentProfile
 from app.services.database import (
+    add_resource_feedback,
     create_debate_record,
     create_generation_task,
     create_resource,
@@ -45,6 +46,7 @@ from app.services.database import (
     find_latest_resource_by_concept,
     find_latest_generation_task_by_concept,
     get_global_error_stats,
+    get_resource_feedback_stats,
     get_resource_versions,
     get_resource_versions_by_id,
     get_session,
@@ -432,6 +434,30 @@ async def get_resource_evolution(concept: str):
         "error_stats": error_stats,
         "versions": enriched,
     }
+
+
+@router.post("/feedback")
+async def create_feedback(payload: ResourceFeedback):
+    """提交学生对资源的反馈（评分、错误报告、困惑标记）"""
+    add_resource_feedback(
+        session_id=payload.session_id,
+        resource_id=payload.resource_id,
+        concept=payload.concept,
+        rating=payload.rating,
+        error_report=payload.error_report or "",
+        confusion_marked=payload.confusion_marked or False,
+    )
+    # 如果错误报告或困惑标记较多，后台触发知识熔炉资源重审
+    if payload.error_report or payload.confusion_marked:
+        from app.services.knowledge_furnace import trigger_resource_review
+        trigger_resource_review(payload.concept, "feedback")
+    return {"success": True, "concept": payload.concept}
+
+
+@router.get("/feedback/stats")
+async def get_feedback_stats(concept: str):
+    """获取某知识点的资源反馈统计"""
+    return get_resource_feedback_stats(concept)
 
 
 _DEFAULT_THINKING_STEPS = [

@@ -49,13 +49,49 @@ class MemoryGraph(GraphStore):
 
         self._load_cypher(cypher_path)
 
+    @staticmethod
+    def _split_cypher_statements(content: str) -> list:
+        """按顶层分号分割 Cypher 语句，忽略字符串/括号内部的分号"""
+        statements = []
+        current = []
+        in_string = False
+        string_char = None
+        depth = 0
+        for ch in content:
+            if in_string:
+                current.append(ch)
+                if ch == string_char:
+                    in_string = False
+            else:
+                if ch in ('"', "'"):
+                    in_string = True
+                    string_char = ch
+                    current.append(ch)
+                elif ch in "([":
+                    depth += 1
+                    current.append(ch)
+                elif ch in ")]":
+                    depth -= 1
+                    current.append(ch)
+                elif ch == ";" and depth == 0:
+                    stmt = "".join(current).strip()
+                    if stmt:
+                        statements.append(stmt)
+                    current = []
+                else:
+                    current.append(ch)
+        if current:
+            stmt = "".join(current).strip()
+            if stmt:
+                statements.append(stmt)
+        return statements
+
     def _load_cypher(self, path: str):
         """简易 Cypher 解析器：只解析本项目中用到的语句"""
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # 按分号分割语句
-        statements = [s.strip() for s in content.split(";") if s.strip()]
+        statements = self._split_cypher_statements(content)
 
         for stmt in statements:
             # 解析 CREATE (:Concept { ... })

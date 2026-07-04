@@ -88,6 +88,12 @@ class GeneratorAgent(BaseAgent):
         # 用解析结果构造 ResourcePackage，缺失字段提供合理默认值
         exercises = self._normalize_exercises(parsed.get("exercises", []), concept)
         code_cases = self._normalize_code_cases(parsed.get("code_cases", []))
+
+        # 自动修正不可运行的代码案例（最多尝试 2 轮）
+        code_cases = self._auto_fix_code_cases(
+            code_cases, concept, concept_info, profile
+        )
+
         package = ResourcePackage(
             concept=concept,
             document=parsed.get("document", raw),
@@ -267,6 +273,67 @@ class GeneratorAgent(BaseAgent):
                 "run_result": run_result,
             })
         return normalized
+
+    def _auto_fix_code_cases(
+        self,
+        code_cases: List[Dict[str, Any]],
+        concept: str,
+        concept_info: dict,
+        profile: Dict[str, Any],
+        max_attempts: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """对不可运行的代码案例自动调用 LLM 修正，最多尝试 max_attempts 轮。"""
+        for _ in range(max_attempts):
+            failed = [c for c in code_cases if not c.get("runnable", False)]
+            if not failed:
+                break
+
+            fix_prompt = f"""你正在修正以下 Python 教学代码案例，使其可以在 Python 3.10+ 环境中正确运行。
+知识点：{concept}
+前置知识：{concept_info.get('prerequisites', [])}
+常见易错点：{concept_info.get('pitfalls', [])}
+
+以下案例执行失败，请只修正失败的案例，保持标题和讲解不变，输出 JSON 数组：
+[
+  {{"title": "案例标题", "code": "修正后的代码", "explanation": "案例说明"}}
+]
+
+失败案例：
+{json.dumps([
+    {
+        "title": c.get("title"),
+        "code": c.get("code"),
+        "explanation": c.get("explanation"),
+        "stderr": c.get("run_result", {}).get("stderr", ""),
+    }
+    for c in failed
+], ensure_ascii=False, indent=2)}
+
+只输出 JSON 数组，不要多余内容。"""
+
+            try:
+                raw = self.think(fix_prompt)
+                fixed = self._extract_json(raw)
+                if not fixed:
+                    break
+                # 支持直接数组或包裹在 {"code_cases": [...]} 中
+                if isinstance(fixed, dict):
+                    fixed = fixed.get("code_cases", [])
+                if not isinstance(fixed, list):
+                    break
+
+                # 用修正后的结果替换失败案例
+                fixed_by_title = {f.get("title"): f for f in fixed if f.get("title")}
+                new_cases = []
+                for case in code_cases:
+                    if not case.get("runnable") and case.get("title") in fixed_by_title:
+                        new_cases.append(fixed_by_title[case["title"]])
+                    else:
+                        new_cases.append(case)
+                code_cases = self._normalize_code_cases(new_cases)
+            except Exception:
+                break
+        return code_cases
 
     def _generate_mindmap(self, concept: str, concept_info: dict) -> str:
         """基于前置依赖和关联知识点生成简单 Mermaid 思维导图"""

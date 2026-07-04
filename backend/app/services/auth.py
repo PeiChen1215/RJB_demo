@@ -28,6 +28,19 @@ from app.core.config import get_settings
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
+# 内存级 Token 黑名单（生产环境应替换为 Redis/数据库）
+_blacklisted_tokens: set[str] = set()
+
+
+def blacklist_token(token: str) -> None:
+    """将 token 加入黑名单"""
+    _blacklisted_tokens.add(token)
+
+
+def is_token_blacklisted(token: str) -> bool:
+    """判断 token 是否已被拉黑"""
+    return token in _blacklisted_tokens
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(
@@ -67,6 +80,8 @@ async def get_current_user(token: Optional[str] = Depends(oauth2_scheme)) -> Opt
     """
     if token is None:
         return None
+    if is_token_blacklisted(token):
+        return None
     payload = decode_access_token(token)
     if payload is None:
         return None
@@ -80,6 +95,12 @@ async def require_user(token: Optional[str] = Depends(oauth2_scheme)) -> str:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="请先登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if is_token_blacklisted(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token 已登出",
             headers={"WWW-Authenticate": "Bearer"},
         )
     payload = decode_access_token(token)

@@ -27,7 +27,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
-from app.services.auth import create_access_token, get_password_hash, verify_password
+from app.services.auth import (
+    blacklist_token,
+    create_access_token,
+    decode_access_token,
+    get_current_user,
+    get_password_hash,
+    is_token_blacklisted,
+    oauth2_scheme,
+    verify_password,
+)
 from app.services.database import create_user, get_user
 
 router = APIRouter()
@@ -103,3 +112,41 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         token_type="bearer",
         username=user["username"],
     )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_token(current_user: str = Depends(get_current_user)):
+    """使用有效的 access_token 换取新的 access_token（延长登录态）"""
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token 无效或已过期",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token = create_access_token(
+        data={"sub": current_user},
+        expires_delta=timedelta(hours=24),
+    )
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        username=current_user,
+    )
+
+
+@router.post("/logout")
+async def logout(token: Optional[str] = Depends(oauth2_scheme)):
+    """登出：将当前 token 加入黑名单，使其立即失效。
+
+    注意：生产环境应使用 Redis/数据库存储黑名单，当前为内存实现。
+    """
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未提供 Token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if is_token_blacklisted(token):
+        return {"success": True, "message": "Token 已登出"}
+    blacklist_token(token)
+    return {"success": True, "message": "登出成功"}

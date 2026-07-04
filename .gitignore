@@ -68,3 +68,6 @@ backend/tmp_inspect_code.py
 # Runtime logs & screenshots
 logs/
 *.err
+
+# Local backups
+backups/
