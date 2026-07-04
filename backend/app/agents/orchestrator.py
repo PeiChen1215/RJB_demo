@@ -293,8 +293,12 @@ class AgentOrchestrator:
     def _route(self, msg: AgentMessage, session: Optional[dict] = None) -> AgentMessage:
         """按意图路由到对应流程"""
         intent = msg.intent
-        # 若当前处于苏格拉底辅导中且用户请求继续，优先继续辅导流，避免被普通知识/路径意图抢走。
-        if session and self._is_continue_tutor(msg, session):
+        # 若当前处于苏格拉底辅导中且用户请求继续或直接要答案，优先继续辅导流，
+        # 避免被普通知识/路径意图抢走。
+        if session and (
+            self._is_continue_tutor(msg, session)
+            or self._is_answer_request(msg, session)
+        ):
             return self._tutor_flow(msg, session)
         if intent == "KNOWLEDGE_REQUEST":
             return self._knowledge_flow(msg, session)
@@ -374,6 +378,8 @@ class AgentOrchestrator:
         # 从 session 中读取当前提问深度，实现 5 阶段递进
         depth = 0
         history = []
+        force_answer = False
+        is_answer_request = session and self._is_answer_request(msg, session)
         if session:
             depth = session.get("socratic_depth", 0)
             history = session.get("socratic_history", [])
@@ -385,6 +391,10 @@ class AgentOrchestrator:
                     "stage": previous_tutor.get("stage"),
                 })
                 session["socratic_history"] = history[-5:]  # 保留最近 5 轮
+            # 如果学生直接要求答案，强制进入收敛阶段并给出最终答案
+            if is_answer_request:
+                force_answer = True
+                depth = max(depth, 4)
 
         tutor_msg = AgentMessage(
             intent=msg.intent,
@@ -397,16 +407,19 @@ class AgentOrchestrator:
                 "conversation_history": history,
             },
             context=msg.context,
-            metadata={"socratic_depth": depth, "force_answer": depth >= 4},
+            metadata={"socratic_depth": depth, "force_answer": force_answer or depth >= 4},
             from_agent="user",
         )
         result = self._safe_run(self.reviewer, tutor_msg)
         socratic = result.payload
 
-        # 推进深度，最大到 convergence 后重置
-        next_depth = depth + 1
-        if next_depth >= 5:
+        # 推进深度；如果是直接要答案，给出答案后结束本次辅导流
+        if is_answer_request:
             next_depth = 0
+        else:
+            next_depth = depth + 1
+            if next_depth >= 5:
+                next_depth = 0
         if session:
             session["socratic_depth"] = next_depth
 
@@ -638,6 +651,17 @@ class AgentOrchestrator:
         continue_patterns = ["继续", "下一步", "继续引导", "请继续", "接着问", "再问一下"]
         return any(p in user_msg for p in continue_patterns)
 
+    def _is_answer_request(self, msg: AgentMessage, session: dict) -> bool:
+        """判断处于辅导中的学生是否要求直接给出答案/思路"""
+        if session.get("socratic_depth", 0) <= 0:
+            return False
+        user_msg = msg.payload.get("message", "")
+        answer_patterns = [
+            "答案", "给我答案", "直接告诉我", "告诉我答案", "看答案",
+            "直接给答案", "告诉我为什么", "直接说答案", "直接讲答案",
+        ]
+        return any(p in user_msg for p in answer_patterns)
+
     def _classify_intent(self, message: str) -> str:
         """识别学生意图：优先用 LLM，失败时回退到关键词匹配"""
         try:
@@ -666,16 +690,16 @@ class AgentOrchestrator:
         except Exception:
             pass
 
-        # 兜底关键词匹配
+        # 兜底关键词匹配：按特异性从高到低判断，减少误判
         msg = message.lower()
-        if any(w in msg for w in ["错", "报错", "bug", "error", "运行不了", "异常", "traceback"]):
+        if any(w in msg for w in ["报错", "错误", "bug", "error", "运行不了", "异常", "traceback", "我代码"]):
             return "CODE_HELP"
-        if any(w in msg for w in ["学", "讲", "教", "什么是", "怎么", "如何做"]):
-            return "KNOWLEDGE_REQUEST"
-        if any(w in msg for w in ["进度", "学得怎么样", "掌握", "测试"]):
-            return "PROGRESS_CHECK"
-        if any(w in msg for w in ["跳过", "下一个", "换", "不想学"]):
+        if any(w in msg for w in ["跳过", "下一个", "换", "不想学", "不学这个", "换题", "调整路径"]):
             return "PATH_ADJUST"
+        if any(w in msg for w in ["进度", "学得怎么样", "学得如何", "练得如何", "掌握", "测试一下"]):
+            return "PROGRESS_CHECK"
+        if any(w in msg for w in ["什么是", "讲一下", "教一下", "怎么", "如何做", "解释一下", "介绍一下", "给我讲"]):
+            return "KNOWLEDGE_REQUEST"
         return "CHAT"
 
     def _extract_concept(self, message: str) -> Optional[str]:

@@ -22,6 +22,8 @@ TODO:
 - [待完成] 接入 Pyodide 后端执行选项
 - [待完成] judge-exercise 接口需真正与会话练习记录联动
 """
+from typing import Any, Dict, List
+
 from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel, Field
 
@@ -66,6 +68,22 @@ class SeedFailedSubmissionsRequest(BaseModel):
     session_id: str
     concept: str
     count: int = Field(default=5, ge=1, le=100)
+
+
+class RunnabilityCheckRequest(BaseModel):
+    """代码案例可运行性校验请求
+
+    支持批量校验教学资源包中的代码案例。
+    """
+    code_cases: List[Dict[str, Any]] = Field(default_factory=list, description="代码案例列表")
+    timeout: float = Field(default=5.0, ge=1.0, le=30.0, description="单段代码执行超时（秒）")
+
+
+class RunnabilityCheckResponse(BaseModel):
+    total: int
+    runnable_count: int
+    failed_count: int
+    results: List[Dict[str, Any]]
 
 
 @router.post("/execute")
@@ -146,6 +164,50 @@ async def judge_code(
         "knowledge_furnace_triggered": triggered,
         "concept": concept,
     }
+
+
+@router.post("/runnability-check")
+async def runnability_check(payload: RunnabilityCheckRequest):
+    """批量校验代码案例是否可运行。
+
+    用于资源生成阶段自动校验 `code_cases`，或前端批量检查练习题/案例代码。
+    """
+    executor = CodeExecutor(timeout=payload.timeout)
+    results = []
+    runnable_count = 0
+
+    for case in payload.code_cases:
+        title = case.get("title", "代码案例")
+        code = case.get("code", "")
+        explanation = case.get("explanation", "")
+        item = {
+            "title": title,
+            "code": code,
+            "explanation": explanation,
+            "runnable": False,
+            "stdout": "",
+            "stderr": "",
+            "execution_time": 0.0,
+        }
+        if code.strip():
+            try:
+                result = executor.execute(code)
+                item["runnable"] = result.get("success", False)
+                item["stdout"] = result.get("stdout", "")
+                item["stderr"] = result.get("stderr", "")
+                item["execution_time"] = result.get("execution_time", 0.0)
+            except Exception as e:
+                item["stderr"] = str(e)
+        if item["runnable"]:
+            runnable_count += 1
+        results.append(item)
+
+    return RunnabilityCheckResponse(
+        total=len(payload.code_cases),
+        runnable_count=runnable_count,
+        failed_count=len(payload.code_cases) - runnable_count,
+        results=results,
+    )
 
 
 @router.post("/seed-failed-submissions")
