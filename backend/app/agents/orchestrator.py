@@ -345,6 +345,15 @@ class AgentOrchestrator:
 
         msg = msg.with_payload(concept=concept).with_context(target_concept=concept)
 
+        # 无论是否走完整资源生成，都先更新学习画像，确保随口询问也能同步已掌握概念
+        profiler_msg = msg.with_stage("profiler")
+        profiler_result = self._safe_run(self.profiler, profiler_msg, timeout=30.0)
+        updated_profile = profiler_result.context.get("profile")
+        if updated_profile:
+            if session:
+                session["profile"] = updated_profile
+            msg = msg.with_context(profile=updated_profile)
+
         # 若用户只是随口询问概念，不走完整资源生成，直接给出轻量解释
         if not is_explicit_resource_request and ("什么是" in user_msg or "解释一下" in user_msg or "介绍一下" in user_msg):
             return msg.reply({
@@ -545,7 +554,7 @@ class AgentOrchestrator:
             breaker.record_failure(agent.name)
             status = "failed"
             error_message = "timeout"
-            return self._fallback_message(agent, msg, reason="timeout")
+            return self._fallback_message(agent, msg, reason="timeout", timeout=timeout)
         except Exception as e:
             breaker.record_failure(agent.name)
             status = "failed"
@@ -600,7 +609,7 @@ class AgentOrchestrator:
             breaker.record_failure(agent.name)
             status = "failed"
             error_message = "timeout"
-            return self._fallback_message(agent, msg, reason="timeout")
+            return self._fallback_message(agent, msg, reason="timeout", timeout=timeout)
         except Exception as e:
             breaker.record_failure(agent.name)
             status = "failed"
@@ -633,11 +642,12 @@ class AgentOrchestrator:
         msg: AgentMessage,
         reason: str,
         error: str = "",
+        timeout: float = 30.0,
     ) -> AgentMessage:
         """构造统一降级响应"""
         reason_text = {
             "circuit_open": "服务暂时不可用，已熔断",
-            "timeout": "执行超时（>30s），已降级",
+            "timeout": f"执行超时（>{timeout:.0f}s），已降级",
             "exception": f"执行失败: {error}",
         }.get(reason, "已降级")
         return msg.reply(

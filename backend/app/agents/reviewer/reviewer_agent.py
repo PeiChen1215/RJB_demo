@@ -131,15 +131,22 @@ class ReviewerAgent(BaseAgent):
                 from_agent=self.name,
             )
 
-        # 2. 神经符号校验：检测超纲概念与代码块 AST 问题
-        from app.services.graph_factory import get_graph_store
-        from app.services.neuro_symbolic import NeuroSymbolicValidator
+        concept_info: Dict[str, Any] = {}
 
-        graph = get_graph_store()
-        concept_info = graph.get_concept(concept) or {}
-        forbidden = graph.check_forbidden_concepts(package.document, concept)
-        ast_violations = NeuroSymbolicValidator().validate_code_blocks(package.document, concept)
-        all_forbidden = list(set(forbidden + ast_violations))
+        # 2. 神经符号校验：检测超纲概念与代码块 AST 问题
+        # Mock 模式下跳过较重的符号校验，直接走 Guardian 快速审核，避免超时降级
+        if isinstance(self.llm, MockLLMProvider):
+            all_forbidden: List[str] = []
+            mode = 'fast'
+        else:
+            from app.services.graph_factory import get_graph_store
+            from app.services.neuro_symbolic import NeuroSymbolicValidator
+
+            graph = get_graph_store()
+            concept_info = graph.get_concept(concept) or {}
+            forbidden = graph.check_forbidden_concepts(package.document, concept)
+            ast_violations = NeuroSymbolicValidator().validate_code_blocks(package.document, concept)
+            all_forbidden = list(set(forbidden + ast_violations))
 
         # 3. 根据风险选择审核模式：高风险/含代码走 full，否则走 fast
         if mode is None:

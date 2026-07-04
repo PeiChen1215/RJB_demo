@@ -457,7 +457,7 @@ function App() {
   const [resourcePanelLoading, setResourcePanelLoading] = useState(false)
   const [conceptDetail, setConceptDetail] = useState<any | null>(null)
   const [styleMode, setStyleMode] = useState<'visual' | 'auditory' | 'kinesthetic'>('visual')
-  const [chatInput, setChatInput] = useState(() => `我想学习 ${targetConcept}`)
+  const [chatInput, setChatInput] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     createChatMessage('assistant', `你已经掌握了前置知识，接下来我们学习「${targetConcept}」。你可以直接提问，我会结合学习画像、知识图谱和练习记录进行辅导。`, 'Socrates'),
   ])
@@ -601,7 +601,7 @@ function App() {
     { source: '函数封装', target: '文件读写', strength: 0.8 },
   ], [graph])
 
-  const masteredCount = pathNodes.filter((node) => node.mastery >= 80).length
+  const masteredCount = session?.profile.mastered_concepts?.length ?? pathNodes.filter((node) => node.mastery >= 80).length
   const selectedNode = pathNodes.find((node) => node.id === selectedNodeId || node.title === selectedConcept) ?? pathNodes[pathNodes.length - 1]
   const learningGoalConcept = plannedPath[plannedPath.length - 1] || selectedConcept
   const averageMastery = selectedNode?.mastery ?? Math.round(
@@ -653,6 +653,9 @@ function App() {
         ? res.data.path
         : [...fromConcepts.slice(0, 1), selectedConcept]
       setPlannedPath(nextPath)
+      // 聚焦到目标节点，让路径高亮自动进入视图中心
+      setSelectedNodeId(selectedConcept)
+      setGraphFocusNonce((value) => value + 1)
       setWorkspaceNote(`后端知识图谱已生成路径：${nextPath.join(' → ')}`)
     } catch {
       setWorkspaceNote('路径接口暂不可用，已保留当前可视化路径。')
@@ -1364,6 +1367,14 @@ function KnowledgePanel({
           </div>
         }
       />
+
+      {plannedPath.length > 1 && (
+        <div className="absolute left-3 right-3 top-[54px] z-20 flex items-center gap-2 rounded-b-md border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 backdrop-blur-sm">
+          <Route className="h-3.5 w-3.5" />
+          <span className="font-medium">已规划路径：</span>
+          <span className="truncate">{plannedPath.join(' → ')}</span>
+        </div>
+      )}
 
       <div
         ref={canvasRef}

@@ -1068,6 +1068,7 @@ def log_behavior_event(session_id: str, event_type: str, dimension: Optional[str
     dimension_map = {
         "mindmap_clicked": ("cognitive_modality", "visual"),
         "graph_node_selected": ("cognitive_modality", "visual"),
+        "heatmap_cell_selected": ("cognitive_modality", "visual"),
         "code_executed": ("cognitive_modality", "kinesthetic"),
         "code_case_viewed": ("cognitive_modality", "kinesthetic"),
         "hint_expanded": ("cognitive_field", "dependent"),
