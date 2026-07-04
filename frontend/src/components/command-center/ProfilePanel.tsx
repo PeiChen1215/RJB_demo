@@ -166,7 +166,7 @@ export function ProfilePanel({
           <strong>{masteredCount} / {totalConcepts > 0 ? totalConcepts : '--'}</strong>
         </div>
         <div>
-          <span>推荐干预</span>
+          <span>推荐干预（前端推断）</span>
           <strong>{profile?.learning_pace === 'fast' ? '挑战题' : profile?.learning_pace === 'slow' ? '分步讲解' : '路径巩固'}</strong>
         </div>
       </div>

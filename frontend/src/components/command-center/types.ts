@@ -20,6 +20,10 @@ export interface HeatmapItem {
   mastery_probability: number
   observation_count?: number
   is_mastered?: boolean
+  sample_count?: number
+  is_default?: boolean
+  last_updated?: string | null
+  explanation?: string
 }
 
 export interface SelectedHeatCell {
@@ -53,11 +57,54 @@ export interface PathNode {
   y: number
   module: string
   difficulty: number
-  state: 'mastered' | 'learning' | 'waiting'
+  state: 'mastered' | 'learning' | 'waiting' | 'current'
   icon: ComponentType<{ className?: string }>
+  backendState?: string
+  layoutColor?: string
 }
 
 export type KnowledgeEdge = GraphData['edges'][number]
+
+export interface GraphLayoutNode {
+  id: string
+  name: string
+  module: string
+  difficulty: number
+  x: number
+  y: number
+  color: string
+}
+
+export interface GraphLayoutData {
+  nodes: GraphLayoutNode[]
+  edges: KnowledgeEdge[]
+}
+
+export interface PersonalPathNode {
+  id: string
+  name: string
+  mastery_probability?: number
+  is_mastered?: boolean
+  is_current?: boolean
+  state?: 'mastered' | 'current' | 'waiting' | string
+}
+
+export interface PersonalPathEdge {
+  source: string
+  target: string
+  reason?: string
+  prerequisites?: string[]
+  pitfalls?: string[]
+}
+
+export interface PersonalPathData {
+  session_id?: string
+  target_concept?: string
+  path_nodes?: PersonalPathNode[]
+  path_edges?: PersonalPathEdge[]
+  mastered_concepts?: string[]
+  path?: string[]
+}
 
 export type ChatMessage = {
   id: string

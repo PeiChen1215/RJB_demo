@@ -53,12 +53,16 @@ import {
   TopBar,
   WorkspaceDock,
   type ChatMessage,
+  type GraphLayoutData,
+  type GraphLayoutNode,
   type HealthDetail,
   type HeatmapItem,
   type KnowledgeEdge,
   type MasteryAnalysisResult,
   type NavKey,
   type PathNode,
+  type PersonalPathData,
+  type PersonalPathNode,
   type SelectedHeatCell,
   type SessionStats,
   type TutorPayload,
@@ -236,6 +240,54 @@ function buildPathNodes(graph: GraphData | null, heatmap: HeatmapItem[]): PathNo
       x,
       y,
       state: value >= 80 ? 'mastered' : value >= 58 ? 'learning' : 'waiting',
+      icon: iconForConcept(node.name, node.module),
+    }
+  })
+}
+
+function normalizePathState(node: PersonalPathNode | undefined, mastery: number): PathNode['state'] {
+  if (node?.is_current || node?.state === 'current') return 'current'
+  if (node?.is_mastered || node?.state === 'mastered' || mastery >= 80) return 'mastered'
+  if (node?.state === 'waiting') return 'waiting'
+  return mastery >= 58 ? 'learning' : 'waiting'
+}
+
+function buildBackendPathNodes(layout: GraphLayoutData | null, personalPath: PersonalPathData | null, heatmap: HeatmapItem[]): PathNode[] {
+  if (!layout?.nodes?.length) return []
+  const visualGraph: GraphData = {
+    nodes: layout.nodes.map((node) => ({
+      id: node.id,
+      name: node.name,
+      module: node.module,
+      difficulty: node.difficulty,
+    })),
+    edges: layout.edges,
+  }
+  const visualNodes = buildPathNodes(visualGraph, heatmap)
+  const visualByName = new Map(visualNodes.map((node) => [node.title, node]))
+  const masteryFromHeatmap = new Map(heatmap.map((item) => [item.concept, Math.round(item.mastery_probability * 100)]))
+  const pathByName = new Map<string, PersonalPathNode>()
+  for (const node of personalPath?.path_nodes ?? []) {
+    pathByName.set(node.name || node.id, node)
+  }
+
+  return layout.nodes.map((node: GraphLayoutNode) => {
+    const visualNode = visualByName.get(node.name)
+    const pathNode = pathByName.get(node.name) || pathByName.get(node.id)
+    const mastery = pathNode?.mastery_probability !== undefined
+      ? Math.round(pathNode.mastery_probability * 100)
+      : masteryFromHeatmap.get(node.name) ?? Math.max(30, 94 - (node.difficulty ?? 3) * 8)
+    return {
+      id: node.id || node.name,
+      title: node.name,
+      module: node.module,
+      difficulty: node.difficulty,
+      mastery,
+      x: visualNode?.x ?? 50,
+      y: visualNode?.y ?? 50,
+      state: normalizePathState(pathNode, mastery),
+      backendState: pathNode?.state,
+      layoutColor: node.color,
       icon: iconForConcept(node.name, node.module),
     }
   })
@@ -436,6 +488,8 @@ function App() {
   const [stats, setStats] = useState<SessionStats | null>(null)
   const [agentTraces, setAgentTraces] = useState<any[]>([])
   const [graph, setGraph] = useState<GraphData | null>(null)
+  const [graphLayout, setGraphLayout] = useState<GraphLayoutData | null>(null)
+  const [personalPath, setPersonalPath] = useState<PersonalPathData | null>(null)
   const [heatmap, setHeatmap] = useState<HeatmapItem[]>([])
   const [health, setHealth] = useState<HealthDetail | null>(null)
   const [targetConcept, setTargetConcept] = useState(getInitialTargetConcept)
@@ -505,9 +559,10 @@ function App() {
 
     async function bootstrap() {
       try {
-        const [sessionRes, graphRes, healthRes] = await Promise.all([
+        const [sessionRes, graphRes, layoutRes, healthRes] = await Promise.all([
           sessionApi.create(targetConcept),
           graphApi.getGraph(),
+          graphApi.getLayout().catch(() => null),
           fetch('/health/detail').then((res) => res.json()).catch(() => null),
         ])
 
@@ -527,15 +582,22 @@ function App() {
         setSelectedConcept(finalTarget)
         setSelectedNodeId(finalTarget)
         setResourceConcept(finalTarget)
-        if (sessionRes.data.suggested_path?.length) {
-          setPlannedPath(sessionRes.data.suggested_path)
-        }
+        if (sessionRes.data.suggested_path?.length) setPlannedPath(sessionRes.data.suggested_path)
         setSession(sessionRes.data)
         if (['visual', 'auditory', 'kinesthetic'].includes(sessionRes.data.profile.cognitive_modality)) {
           setStyleMode(sessionRes.data.profile.cognitive_modality as 'visual' | 'auditory' | 'kinesthetic')
         }
         setGraph(graphRes.data)
+        if (layoutRes?.data) setGraphLayout(layoutRes.data)
         setHealth(healthRes)
+        graphApi.getPersonalPath(sessionRes.data.session_id, finalTarget)
+          .then((pathRes) => {
+            if (cancelled || pathRes.data.error) return
+            setPersonalPath(pathRes.data)
+            const backendPath = pathRes.data.path_nodes?.map((node) => node.name || node.id).filter(Boolean)
+            if (backendPath?.length) setPlannedPath(backendPath)
+          })
+          .catch(() => undefined)
         await behaviorApi.log(sessionRes.data.session_id, 'command_center_opened', finalTarget, {
           surface: 'command-center',
         }).catch(() => undefined)
@@ -590,8 +652,12 @@ function App() {
   const graphConcepts = useMemo(() => new Set(graph?.nodes.map((node) => node.name) ?? []), [graph])
   const pageTitle = NAV_ITEMS.find((item) => item.key === activeNav)?.label ?? '知识图谱'
 
-  const pathNodes = useMemo<PathNode[]>(() => buildPathNodes(graph, heatmap), [graph, heatmap])
-  const graphEdges = useMemo<KnowledgeEdge[]>(() => graph?.edges.length ? graph.edges : [
+  const pathNodes = useMemo<PathNode[]>(() => {
+    const backendNodes = buildBackendPathNodes(graphLayout, personalPath, heatmap)
+    return backendNodes.length ? backendNodes : buildPathNodes(graph, heatmap)
+  }, [graphLayout, personalPath, graph, heatmap])
+  const graphEdges = useMemo<KnowledgeEdge[]>(() => {
+    const baseEdges = graphLayout?.edges?.length ? graphLayout.edges : graph?.edges.length ? graph.edges : [
     { source: 'Python 基础语法', target: '变量基础', strength: 0.8 },
     { source: '数据类型与变量', target: '变量基础', strength: 0.8 },
     { source: '输入与输出', target: '文件读写', strength: 0.8 },
@@ -599,7 +665,19 @@ function App() {
     { source: '条件判断', target: '循环结构', strength: 0.8 },
     { source: '循环结构', target: '函数封装', strength: 0.8 },
     { source: '函数封装', target: '文件读写', strength: 0.8 },
-  ], [graph])
+    ]
+    const pathMeta = new Map((personalPath?.path_edges ?? []).map((edge) => [`${edge.source}->${edge.target}`, edge]))
+    const merged = baseEdges.map((edge) => ({
+      ...edge,
+      ...(pathMeta.get(`${edge.source}->${edge.target}`) ?? {}),
+    } as KnowledgeEdge & Record<string, any>))
+    for (const edge of personalPath?.path_edges ?? []) {
+      if (!merged.some((item) => item.source === edge.source && item.target === edge.target)) {
+        merged.push({ ...edge, strength: 1 } as KnowledgeEdge & Record<string, any>)
+      }
+    }
+    return merged
+  }, [personalPath, graphLayout, graph])
 
   const masteredCount = pathNodes.filter((node) => node.mastery >= 80).length
   const selectedNode = pathNodes.find((node) => node.id === selectedNodeId || node.title === selectedConcept) ?? pathNodes[pathNodes.length - 1]
@@ -644,14 +722,17 @@ function App() {
   const planPath = async () => {
     navigateTo('graph', `Navigator 正在为「${selectedConcept}」规划路径...`)
     try {
-      const mastered = session?.profile.mastered_concepts?.length
-        ? session.profile.mastered_concepts
-        : pathNodes.filter((node) => node.state === 'mastered').map((node) => node.title)
-      const fromConcepts = mastered.length ? mastered : [pathNodes[0]?.title || selectedConcept]
-      const res = await graphApi.getPath(fromConcepts, selectedConcept)
-      const nextPath = Array.isArray(res.data.path) && res.data.path.length > 0
-        ? res.data.path
-        : [...fromConcepts.slice(0, 1), selectedConcept]
+      const res = session
+        ? await graphApi.getPersonalPath(session.session_id, selectedConcept)
+        : await graphApi.getPath(
+          pathNodes.filter((node) => node.state === 'mastered').map((node) => node.title),
+          selectedConcept
+        )
+      if (res.data.error) throw new Error(res.data.error)
+      setPersonalPath(res.data)
+      const nextPath = res.data.path_nodes?.map((node) => node.name || node.id).filter(Boolean)
+        || (Array.isArray(res.data.path) ? res.data.path : [])
+      if (!nextPath.length) throw new Error('empty path')
       setPlannedPath(nextPath)
       setWorkspaceNote(`后端知识图谱已生成路径：${nextPath.join(' → ')}`)
     } catch {
@@ -1309,6 +1390,7 @@ function KnowledgePanel({
   onGenerateResource: (concept: string) => void
 }) {
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? nodes[nodes.length - 1]
+  const selectedIncomingEdge = edges.find((edge) => edge.target === selectedNode?.title) as (KnowledgeEdge & Record<string, any>) | undefined
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const mapX = useMotionValue(0)
   const [canvasSize, setCanvasSize] = useState({ width: 920, height: 355 })
@@ -1327,7 +1409,7 @@ function KnowledgePanel({
   const nodeX = selectedNode ? (selectedNode.x / 100) * mapPixelWidth : 0
   const nodeY = selectedNode ? (selectedNode.y / 100) * canvasSize.height : 0
   const detailLeft = selectedNode
-    ? Math.min(mapPixelWidth - 270, Math.max(12, nodeX + (selectedNode.x > 72 ? -292 : 82)))
+    ? Math.min(mapPixelWidth - 270, Math.max(12, nodeX + 82))
     : 12
   const detailTop = selectedNode
     ? Math.min(Math.max(12, canvasSize.height - 220), Math.max(12, nodeY - 96))
@@ -1415,7 +1497,7 @@ function KnowledgePanel({
           {showDetail && selectedNode && (
             <motion.div
               key={selectedNodeId}
-              className={cn('target-card', selectedNode.x > 72 && 'target-card-left')}
+              className="target-card"
               style={{ left: detailLeft, top: detailTop }}
               initial={{ opacity: 0, y: 12, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1428,12 +1510,17 @@ function KnowledgePanel({
                 {(() => {
                   const prerequisites = conceptDetail?.prerequisites?.length
                     ? conceptDetail.prerequisites
+                    : selectedIncomingEdge?.prerequisites?.length
+                      ? selectedIncomingEdge.prerequisites
                     : edges.filter((e) => e.target === selectedNode.title).map((e) => e.source)
                   return prerequisites.length > 0
                     ? prerequisites.join('、')
                     : (plannedPath.slice(0, -1).join('、') || '无前置依赖')
                 })()}
               </p>
+              {selectedIncomingEdge?.reason && (
+                <p className="mt-2 leading-relaxed text-amber-100/80">推荐理由：{selectedIncomingEdge.reason}</p>
+              )}
               <div className="mt-2 flex items-center gap-2">
                 <span className="text-slate-400">掌握度：</span>
                 <strong className="text-amber-200">{averageMastery}%</strong>
@@ -1441,7 +1528,9 @@ function KnowledgePanel({
                   <span className="block h-full rounded-full bg-gradient-to-r from-amber-500 to-emerald-300" style={{ width: `${averageMastery}%` }} />
                 </span>
               </div>
-              <p className="mt-2 leading-relaxed text-slate-300">易错点：{conceptDetail?.common_errors?.join('、') || '文件路径、编码格式、读写模式、异常处理'}</p>
+              <p className="mt-2 leading-relaxed text-slate-300">
+                易错点：{conceptDetail?.common_errors?.join('、') || selectedIncomingEdge?.pitfalls?.filter(Boolean).join('、') || '后端暂未返回该节点易错点'}
+              </p>
               <p className="mt-2 font-mono text-[11px] text-emerald-300">{resourceStatus}</p>
               <div className="mt-3 flex gap-2">
                 <button onClick={onPlanPath} className="mini-action">规划路径</button>

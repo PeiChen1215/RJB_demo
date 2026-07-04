@@ -42,7 +42,7 @@ export function HexAvatar({
   small,
 }: {
   icon: ComponentType<{ className?: string }>
-  tone: 'amber' | 'mint'
+  tone: 'amber' | 'mint' | 'error'
   small?: boolean
 }) {
   return (
