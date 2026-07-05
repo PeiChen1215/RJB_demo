@@ -16,10 +16,10 @@
 TODO:
 - [已完成] 从 Cypher 文件解析 Concept、Pitfall、PREREQUISITE_OF、HAS_PITFALL。
 - [已完成] 知识点查询、前置依赖、后续知识与易错点组装。
-- [已完成] 基于 BFS 的最短学习路径与超纲概念检测。
+- [已完成] 基于 A* 的最优学习路径与超纲概念检测（已接入 path_planner.astar_learning_path）。
 - [待完成] 当前为简易 Cypher 解析器，仅支持本项目用到的语句。
 - [待完成] 支持更复杂的 Cypher 语法（属性类型、关系属性、WHERE 等）。
-- [待完成] 增加图算法：A* 路径规划（考虑难度与画像）、PageRank、相似度。
+- [待完成] 增加更多图算法：PageRank、相似度、图嵌入。
 """
 import os
 import re
