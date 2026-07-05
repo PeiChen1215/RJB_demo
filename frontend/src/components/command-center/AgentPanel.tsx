@@ -38,6 +38,12 @@ function formatStage(stage: string | undefined, defaultJob: string) {
   return STAGE_LABELS[stage.toLowerCase()] || stage
 }
 
+function getAgentTone(status: string): 'mint' | 'amber' | 'error' {
+  if (status === 'working') return 'amber'
+  if (status === 'error') return 'error'
+  return 'mint'
+}
+
 export function AgentPanel({
   onAgentAction,
   traces,
@@ -58,30 +64,41 @@ export function AgentPanel({
   }, [traces])
 
   const runningCount = useMemo(() => traces.filter((t) => t.status === 'running').length, [traces])
+  const failedCount = useMemo(() => traces.filter((t) => t.status === 'failed').length, [traces])
+  const tracedAgentCount = Object.keys(latestByAgent).length
 
   return (
     <Panel className="agent-panel min-h-[230px]">
-      <PanelHeader title="Agent 协作" icon={Sparkles} meta={<span className="flex items-center gap-2 text-xs text-emerald-300"><span className="h-2 w-2 rounded-full bg-emerald-400" />5/5 在线</span>} />
+      <PanelHeader
+        title="Agent 协作"
+        icon={Sparkles}
+        meta={<span className="flex items-center gap-2 text-xs text-emerald-300"><span className="h-2 w-2 rounded-full bg-emerald-400" />{traces.length ? `${tracedAgentCount}/5 有调用记录` : '等待后端 trace'}</span>}
+      />
       <div className="agent-list">
         {AGENTS.map((agent, index) => {
           const trace = latestByAgent[agent.name]
           const finishedStatus = trace?.status === 'running' ? 'working' : trace?.status === 'failed' ? 'error' : 'online'
           const status = trace ? finishedStatus : agent.status
+          const tone = getAgentTone(status)
           const timeText = trace ? `${trace.duration_ms}ms` : '空闲'
-          const label = trace && trace.status !== 'running' && trace.status !== 'failed'
-            ? `${agent.job} · 完成`
-            : agent.job
+          const label = trace
+            ? trace.status === 'failed'
+              ? `${agent.job} · 异常`
+              : trace.status === 'running'
+                ? `${agent.job} · 执行中`
+                : `${agent.job} · 完成`
+            : `${agent.job} · 暂无记录`
           return (
             <motion.button
               type="button"
               onClick={() => onAgentAction(agent.name)}
               key={agent.name}
-              className={cn('agent-row text-left', agent.accent)}
+              className={cn('agent-row text-left', tone)}
               initial={{ opacity: 0, x: 16 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: index * 0.08 }}
             >
-              <HexAvatar icon={index === 3 ? ShieldCheck : Brain} tone={agent.accent === 'amber' ? 'amber' : 'mint'} small />
+              <HexAvatar icon={index === 3 ? ShieldCheck : Brain} tone={tone} small />
               <strong>{agent.name}</strong>
               <span>{trace ? formatStage(trace.stage, agent.job) : label}</span>
               <div className="agent-pulses">
@@ -99,16 +116,17 @@ export function AgentPanel({
           {AGENTS.map((agent, index) => {
             const trace = latestByAgent[agent.name]
             const status = trace?.status === 'running' ? 'working' : trace?.status === 'failed' ? 'error' : trace ? 'online' : 'online'
+            const tone = getAgentTone(status)
             return (
-              <span key={agent.name} className={cn(agent.accent, status === 'working' && 'working', status === 'error' && 'error')} style={{ '--agent-index': index } as Record<string, number>} />
+              <span key={agent.name} className={cn(tone, status === 'working' && 'working', status === 'error' && 'error')} style={{ '--agent-index': index } as Record<string, number>} />
             )
           })}
           <strong>协作中枢</strong>
         </div>
         <div className="agent-metrics">
           <p><span>活跃任务</span><strong>{runningCount || 0}</strong></p>
-          <p><span>链路状态</span><strong>{traces.some((t) => t.status === 'failed') ? '存在降级' : '稳定'}</strong></p>
-          <p><span>本轮策略</span><strong>画像-路径-反馈</strong></p>
+          <p><span>链路状态</span><strong>{failedCount ? `异常 ${failedCount}` : traces.length ? '稳定' : '待触发'}</strong></p>
+          <p><span>Trace 覆盖</span><strong>{tracedAgentCount}/5</strong></p>
         </div>
       </div>
     </Panel>

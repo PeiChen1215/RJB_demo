@@ -16,7 +16,45 @@ function looksLikePythonCode(value: string) {
 
 function makeStarterFromExercise(concept: string, expectedOutput: string) {
   const expectedLine = expectedOutput ? `# 目标输出：${expectedOutput}` : '# 目标输出：请根据题目要求补全'
-  return `# 请在这里完成「${concept}」练习\n${expectedLine}\n`
+  return `# TODO: 完成「${concept}」练习\n${expectedLine}\n# 在下面开始作答\n`
+}
+
+function formatStarterCode(value: string, concept: string, expectedOutput: string) {
+  const starter = value.trimEnd() || makeStarterFromExercise(concept, expectedOutput)
+  return `${starter}\n`
+}
+
+function getExerciseKey(concept: string, exercise: ExerciseView | undefined, index: number) {
+  return `${concept}-${index}-${exercise?.question || 'exercise'}`
+}
+
+function formatCodeOutput(result: CodeRunResult, missingExpected = false) {
+  const stdout = textFrom(result.stdout || result.output || result.actual_output)
+  const stderr = textFrom(result.stderr || result.error)
+  const sections = [
+    missingExpected ? '本题后端暂未提供标准输出，所以这里只运行代码并展示结果，暂不自动判断对错。' : '代码运行完成。',
+    stdout ? `程序输出：\n${stdout}` : '程序没有输出。可以检查是否需要使用 print(...) 输出结果。',
+    stderr ? `错误信息：\n${stderr}` : '',
+  ].filter(Boolean)
+  return sections.join('\n\n')
+}
+
+function formatJudgeResult(result: any) {
+  if (typeof result === 'string') return result
+  const correct = Boolean(result?.correct ?? result?.passed ?? result?.success ?? result?.is_correct)
+  const hasVerdict = ['correct', 'passed', 'success', 'is_correct'].some((key) => key in (result || {}))
+  const stdout = textFrom(result?.stdout || result?.actual_output || result?.output)
+  const stderr = textFrom(result?.stderr || result?.error)
+  const expected = textFrom(result?.expected_output || result?.expected)
+  const message = textFrom(result?.feedback || result?.message || result?.detail)
+  const lines = [
+    hasVerdict ? (correct ? '判题通过：输出结果符合题目要求。' : '还差一点：输出结果暂未匹配题目要求。') : '判题完成。',
+    expected ? `标准输出：\n${expected}` : '',
+    stdout ? `你的输出：\n${stdout}` : '',
+    stderr ? `错误信息：\n${stderr}` : '',
+    message && !/^\{/.test(message) ? message : '',
+  ].filter(Boolean)
+  return lines.join('\n\n') || '判题完成，但后端没有返回可展示的反馈。'
 }
 
 function normalizeExercise(exercise: Record<string, any>, index: number, concept: string): ExerciseView {
@@ -37,7 +75,9 @@ function normalizeExercise(exercise: Record<string, any>, index: number, concept
 
   return {
     question,
-    starter_code: answerLeaked ? makeStarterFromExercise(concept, expectedOutput) : rawStarter || makeStarterFromExercise(concept, expectedOutput),
+    starter_code: answerLeaked
+      ? makeStarterFromExercise(concept, expectedOutput)
+      : formatStarterCode(rawStarter, concept, expectedOutput),
     expected_output: expectedOutput,
     hints,
     solution: rawSolution,
@@ -177,7 +217,8 @@ export function ResourceLibraryPanel({
   type ResourceSection = 'document' | 'mindmap' | 'exercise' | 'code' | 'audio' | 'review' | 'versions'
   const [activeSection, setActiveSection] = useState<ResourceSection>('document')
   const [activeExerciseIndex, setActiveExerciseIndex] = useState(0)
-  const [exerciseCode, setExerciseCode] = useState('')
+  const [exerciseDrafts, setExerciseDrafts] = useState<Record<string, string>>({})
+  const [solutionVisible, setSolutionVisible] = useState<Record<string, boolean>>({})
   const [resultText, setResultText] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
   const [rating, setRating] = useState<number | null>(null)
@@ -201,8 +242,14 @@ export function ResourceLibraryPanel({
     () => rawExercises.map((exercise, index) => normalizeExercise(exercise, index, selectedConcept)),
     [rawExercises, selectedConcept],
   )
+  const exerciseSignature = useMemo(
+    () => exercises.map((exercise, index) => `${index}:${exercise.question}:${exercise.starter_code}`).join('|'),
+    [exercises],
+  )
   const codeCases = activeResource?.code_cases || []
   const currentExercise = exercises[activeExerciseIndex] || exercises[0]
+  const currentExerciseKey = getExerciseKey(selectedConcept, currentExercise, activeExerciseIndex)
+  const exerciseCode = exerciseDrafts[currentExerciseKey] ?? String(currentExercise?.starter_code || '')
   const hasResource = Boolean(activeResource && (
     activeResource.document ||
     activeResource.mindmap ||
@@ -222,9 +269,17 @@ export function ResourceLibraryPanel({
 
   useEffect(() => {
     setActiveExerciseIndex(0)
-    setExerciseCode(String(exercises[0]?.starter_code || ''))
+    setExerciseDrafts((current) => {
+      const next: Record<string, string> = {}
+      exercises.forEach((exercise, index) => {
+        const key = getExerciseKey(selectedConcept, exercise, index)
+        next[key] = current[key] ?? String(exercise.starter_code || '')
+      })
+      return next
+    })
+    setSolutionVisible({})
     setResultText('')
-  }, [selectedConcept, exercises[0]?.starter_code])
+  }, [selectedConcept, exerciseSignature])
 
   const selectSection = (section: ResourceSection) => {
     setActiveSection(section)
@@ -234,16 +289,19 @@ export function ResourceLibraryPanel({
 
   const runCurrentExercise = async () => {
     if (!currentExercise) return
-    if (!currentExercise.expected_output) {
-      setResultText('当前练习缺少 expected_output，无法进行自动判题。请先重新生成资源，或查看参考答案后手动练习。')
-      return
-    }
     setActionLoading(true)
     try {
-      const result = await onJudgeExercise(currentExercise, exerciseCode)
-      setResultText(typeof result === 'string' ? result : JSON.stringify(result, null, 2))
+      if (currentExercise.expected_output) {
+        const result = await onJudgeExercise(currentExercise, exerciseCode)
+        setResultText(formatJudgeResult(result))
+      } else {
+        const result = await onRunCode(exerciseCode)
+        setResultText(formatCodeOutput(result, true))
+      }
     } catch {
-      setResultText('练习判题接口暂不可用，请确认后端服务。')
+      setResultText(currentExercise.expected_output
+        ? '练习判题接口暂不可用，请确认后端服务。'
+        : '代码运行接口暂不可用，请确认后端服务。')
     } finally {
       setActionLoading(false)
     }
@@ -372,7 +430,6 @@ export function ResourceLibraryPanel({
                   key={`${exercise.question}-${index}`}
                   onClick={() => {
                     setActiveExerciseIndex(index)
-                    setExerciseCode(String(exercise.starter_code || ''))
                     setResultText('')
                   }}
                   className={cn(index === activeExerciseIndex && 'active')}
@@ -389,7 +446,7 @@ export function ResourceLibraryPanel({
                   {currentExercise.expected_output ? (
                     <p>期望输出：<code>{currentExercise.expected_output}</code></p>
                   ) : (
-                    <p className="warning">后端未返回 expected_output，本题暂不开放自动判题。</p>
+                    <p className="warning">后端暂未提供标准输出，本题会先运行代码并展示程序输出；如需自动判题，需要后端补充 expected_output。</p>
                   )}
                   {currentExercise.answerLeaked && (
                     <p className="warning">已检测到生成结果中答案混入题干/初始代码，页面已自动隐藏答案并重置作答区。</p>
@@ -400,14 +457,35 @@ export function ResourceLibraryPanel({
                     </div>
                   )}
                 </div>
-                <textarea value={exerciseCode} onChange={(event) => setExerciseCode(event.target.value)} />
+                <textarea
+                  value={exerciseCode}
+                  onChange={(event) => {
+                    const nextValue = event.target.value
+                    setExerciseDrafts((current) => ({ ...current, [currentExerciseKey]: nextValue }))
+                  }}
+                  spellCheck={false}
+                />
                 <div className="resource-actions">
-                  <button onClick={runCurrentExercise} disabled={actionLoading || !currentExercise.expected_output} className="run-button">
+                  <button onClick={runCurrentExercise} disabled={actionLoading} className="run-button">
                     {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                    提交判题
+                    {currentExercise.expected_output ? '提交判题' : '运行查看输出'}
                   </button>
-                  <button onClick={() => setResultText(String(currentExercise.solution || '暂无参考答案'))} className="tool-button">参考答案</button>
+                  <button
+                    onClick={() => setSolutionVisible((current) => ({
+                      ...current,
+                      [currentExerciseKey]: !current[currentExerciseKey],
+                    }))}
+                    className="tool-button"
+                  >
+                    {solutionVisible[currentExerciseKey] ? '隐藏参考答案' : '查看参考答案'}
+                  </button>
                 </div>
+                {solutionVisible[currentExerciseKey] && (
+                  <div className="exercise-solution-card">
+                    <strong>参考答案</strong>
+                    <pre>{currentExercise.solution || '后端暂未返回参考答案。'}</pre>
+                  </div>
+                )}
               </>
             ) : <span className="resource-muted">后端未返回练习题。</span>}
           </div>
@@ -459,7 +537,7 @@ export function ResourceLibraryPanel({
 
         {resultText && (
           <div className="resource-result">
-            <p className="resource-inspector-title">接口返回</p>
+            <p className="resource-inspector-title">练习反馈</p>
             <pre>{resultText}</pre>
           </div>
         )}
@@ -525,12 +603,15 @@ export function ResourceLibraryPanel({
               />
               我对这部分内容感到困惑
             </label>
-            <textarea
-              placeholder="如有错误或不清晰的地方，请在这里描述..."
-              value={errorReport}
-              onChange={(e) => setErrorReport(e.target.value)}
-              rows={2}
-            />
+            <div className="resource-feedback-field">
+              <span>文字反馈</span>
+              <textarea
+                placeholder="如有错误、不清晰或希望补充的地方，请在这里描述..."
+                value={errorReport}
+                onChange={(e) => setErrorReport(e.target.value)}
+                rows={3}
+              />
+            </div>
             <button
               onClick={submitFeedback}
               disabled={feedbackSubmitting}

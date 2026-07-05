@@ -55,11 +55,16 @@ export function HeatmapPanel({
     return { average, mastered, weak, total: items.length }
   }, [items])
   const bktParams = bktDetail?.bkt_params || {}
-  const observationCount = Number(bktParams.observation_count ?? 0)
+  const observationCount = Number(bktDetail?.sample_count ?? bktParams.observation_count ?? 0)
+  const isDefault = Boolean(bktDetail?.is_default ?? (observationCount === 0))
+  const lastUpdated = typeof bktDetail?.last_updated === 'string' && bktDetail.last_updated
+    ? bktDetail.last_updated
+    : ''
   const modelEvidenceText = bktDetail?.concept
-    ? observationCount > 0
-      ? `基于 ${observationCount} 次练习记录判断`
-      : '暂无该知识点练习记录，当前为初始估计'
+    ? bktDetail?.explanation
+      || (isDefault
+        ? `默认参数 · 样本 ${observationCount} 次${lastUpdated ? ` · ${lastUpdated}` : ''}`
+        : `基于 ${observationCount} 次练习记录判断${lastUpdated ? ` · ${lastUpdated}` : ''}`)
     : '点击热力格后查看模型证据'
 
   return (
@@ -126,6 +131,9 @@ export function HeatmapPanel({
           <span>{bktLoading ? '模型诊断读取中...' : bktDetail?.concept ? `掌握度模型：${bktDetail.concept}` : '掌握度模型待选中'}</span>
           <strong>{bktDetail?.mastery_probability !== undefined ? `${Math.round(bktDetail.mastery_probability * 100)}%` : '--'}</strong>
           <em>{modelEvidenceText}</em>
+          {bktDetail?.concept && (
+            <em>{isDefault ? '当前结论来自后端默认 BKT 参数，需更多练习校准。' : `后端样本数：${observationCount}`}</em>
+          )}
         </div>
         <div className="heatmap-scale" aria-hidden="true">
           <span>低掌握</span>

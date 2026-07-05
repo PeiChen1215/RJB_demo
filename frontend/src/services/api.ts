@@ -72,6 +72,42 @@ export interface GraphData {
   }>
 }
 
+export interface GraphLayoutResponse {
+  nodes: Array<{
+    id: string
+    name: string
+    module: string
+    difficulty: number
+    x: number
+    y: number
+    color: string
+  }>
+  edges: GraphData['edges']
+}
+
+export interface PersonalPathResponse {
+  session_id?: string
+  target_concept?: string
+  path_nodes?: Array<{
+    id: string
+    name: string
+    mastery_probability?: number
+    is_mastered?: boolean
+    is_current?: boolean
+    state?: string
+  }>
+  path_edges?: Array<{
+    source: string
+    target: string
+    reason?: string
+    prerequisites?: string[]
+    pitfalls?: string[]
+  }>
+  mastered_concepts?: string[]
+  path?: string[]
+  error?: string
+}
+
 // 会话相关接口：创建、画像、统计、对话（含 SSE）
 export const sessionApi = {
   create: (target_concept?: string) =>
@@ -110,15 +146,13 @@ export const sessionApi = {
 export const graphApi = {
   getGraph: () => api.get<GraphData>('/graph/'),
   getLayout: () =>
-    api.get<{ nodes: Array<{ id: string; name: string; module: string; difficulty: number; x: number; y: number; color: string }>; edges: GraphData['edges'] }>(
-      '/graph/layout'
-    ),
+    api.get<GraphLayoutResponse>('/graph/layout'),
   getPath: (fromConcepts: string[], toConcept: string) =>
-    api.get('/graph/path', {
+    api.get<PersonalPathResponse>('/graph/path', {
       params: { from_concepts: fromConcepts.join(','), to_concept: toConcept },
     }),
   getPersonalPath: (sessionId: string, targetConcept?: string) =>
-    api.get('/graph/path', {
+    api.get<PersonalPathResponse>('/graph/path', {
       params: { session_id: sessionId, target_concept: targetConcept },
     }),
   getConcept: (name: string) => api.get(`/graph/concept/${name}`),
