@@ -72,5 +72,8 @@ logs/
 # WebBridge / manual test screenshots (keep local only)
 docs/test-screenshots/
 
+# WebBridge / manual test scripts (keep local only)
+scripts/webbridge-tests/
+
 # Local backups
 backups/
