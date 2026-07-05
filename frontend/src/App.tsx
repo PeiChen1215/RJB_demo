@@ -513,6 +513,24 @@ function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     createChatMessage('assistant', `你已经掌握了前置知识，接下来我们学习「${targetConcept}」。你可以直接提问，我会结合学习画像、知识图谱和练习记录进行辅导。`, 'Socrates'),
   ])
+  // 当学生切换知识点时，同步更新对话区的欢迎语与当前目标
+  useEffect(() => {
+    setChatMessages((prev) => {
+      if (prev.length === 0) return prev
+      const first = prev[0]
+      if (first.role === 'assistant' && first.agentName === 'Socrates') {
+        return [
+          {
+            ...first,
+            content: `你已经掌握了前置知识，接下来我们学习「${selectedConcept}」。你可以直接提问，我会结合学习画像、知识图谱和练习记录进行辅导。`,
+          },
+          ...prev.slice(1),
+        ]
+      }
+      return prev
+    })
+  }, [selectedConcept])
+
   const [chatLoading, setChatLoading] = useState(false)
   const [code, setCode] = useState(SAMPLE_CODE)
   const [codeOutput, setCodeOutput] = useState(SAMPLE_OUTPUT)
@@ -1266,7 +1284,7 @@ function App() {
                   setInput={setChatInput}
                   messages={chatMessages}
                   loading={chatLoading}
-                  targetConcept={targetConcept}
+                  targetConcept={selectedConcept}
                   onSend={sendChat}
                   onContinueTutor={() => sendChat('请继续用苏格拉底式提问引导我，不要直接给答案。')}
                 />

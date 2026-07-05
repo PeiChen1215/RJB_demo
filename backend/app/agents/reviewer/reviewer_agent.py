@@ -137,6 +137,7 @@ class ReviewerAgent(BaseAgent):
         # Mock 模式下跳过较重的符号校验，直接走 Guardian 快速审核，避免超时降级
         if isinstance(self.llm, MockLLMProvider):
             all_forbidden: List[str] = []
+            ast_violations: List[str] = []
             mode = 'fast'
         else:
             from app.services.graph_factory import get_graph_store

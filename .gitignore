@@ -69,5 +69,8 @@ backend/tmp_inspect_code.py
 logs/
 *.err
 
+# WebBridge / manual test screenshots (keep local only)
+docs/test-screenshots/
+
 # Local backups
 backups/
