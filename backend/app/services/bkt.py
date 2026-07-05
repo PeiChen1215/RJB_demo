@@ -18,6 +18,7 @@ TODO:
 - [待完成] 接入 learning_event 数据来自动拟合参数
 - [待完成] 支持知识点间的转移矩阵（更精确）
 - [待完成] 添加参数组合搜索，找到最优拟合
+- [已完成] heatmap / bkt 接口返回 is_default / sample_count / last_updated / explanation 字段
 """
 import json
 from typing import Dict, Optional
