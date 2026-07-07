@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import { motion, useMotionValue } from 'framer-motion'
+import { KnowledgeGraph as EChartsKnowledgeGraph } from '@/components/graph/KnowledgeGraph'
 import {
   BarChart3,
   BookOpen,
@@ -496,6 +497,7 @@ function App() {
   const [resourceConcept, setResourceConcept] = useState(targetConcept)
   const [plannedPath, setPlannedPath] = useState<string[]>(['变量基础', '条件判断', '循环结构', '函数封装', targetConcept])
   const [showGraphDetail, setShowGraphDetail] = useState(true)
+  const [graphView, setGraphView] = useState<'path' | 'structure'>('path')
   const [graphFocusNonce, setGraphFocusNonce] = useState(0)
   const [selectedHeatCell, setSelectedHeatCell] = useState<SelectedHeatCell | null>(null)
   const [bktDetail, setBktDetail] = useState<any | null>(null)
@@ -575,8 +577,23 @@ function App() {
 
     async function bootstrap() {
       try {
-        const [sessionRes, graphRes, layoutRes, healthRes] = await Promise.all([
-          sessionApi.create(targetConcept),
+        // 复用已有会话或创建新会话
+        const savedSessionId = window.localStorage.getItem('eduhive.session_id')
+        let sessionRes
+        if (savedSessionId) {
+          try {
+            sessionRes = await sessionApi.getSession(savedSessionId)
+            if (!sessionRes.data?.session_id) throw new Error('stale')
+          } catch {
+            window.localStorage.removeItem('eduhive.session_id')
+            sessionRes = await sessionApi.create(targetConcept)
+          }
+        } else {
+          sessionRes = await sessionApi.create(targetConcept)
+        }
+        window.localStorage.setItem('eduhive.session_id', sessionRes.data.session_id)
+
+        const [graphRes, layoutRes, healthRes] = await Promise.all([
           graphApi.getGraph(),
           graphApi.getLayout().catch(() => null),
           fetch('/health/detail').then((res) => res.json()).catch(() => null),
@@ -1208,34 +1225,46 @@ function App() {
 
             {activeNav === 'graph' && (
               <div className={cn('module-grid graph-page', showGraphDetail && 'graph-page-detailing')}>
-                <KnowledgePanel
-                  nodes={pathNodes}
-                  edges={graphEdges}
-                  plannedPath={plannedPath}
-                  selectedNodeId={selectedNodeId}
-                  selectedConcept={selectedConcept}
-                  graphConcepts={graphConcepts}
-                  averageMastery={averageMastery}
-                  resourceStatus={resourceStatus}
-                  conceptDetail={conceptDetail}
-                  showDetail={showGraphDetail}
-                  focusNonce={graphFocusNonce}
-                  onNodeSelect={selectNode}
-                  onCanvasBlankClick={() => setShowGraphDetail(false)}
-                  onPlanPath={planPath}
-                  onGenerateResource={(concept) => generateResource(concept, 'node')}
-                />
-                <WorkspaceDock
-                  activeNav={activeNav}
-                  selectedConcept={selectedConcept}
-                  styleMode={styleMode}
-                  workspaceNote={workspaceNote}
-                  thinkingSteps={thinkingSteps}
-                  versions={versions}
-                  onStyleChange={changeStyleMode}
-                  onAnalyze={analyzeMastery}
-                  onPlanPath={planPath}
-                />
+                {graphView === 'path' ? (
+                  <>
+                    <KnowledgePanel
+                      nodes={pathNodes}
+                      edges={graphEdges}
+                      plannedPath={plannedPath}
+                      selectedNodeId={selectedNodeId}
+                      selectedConcept={selectedConcept}
+                      graphConcepts={graphConcepts}
+                      averageMastery={averageMastery}
+                      resourceStatus={resourceStatus}
+                      conceptDetail={conceptDetail}
+                      showDetail={showGraphDetail}
+                      focusNonce={graphFocusNonce}
+                      onSwitchToStructure={() => setGraphView('structure')}
+                      onNodeSelect={selectNode}
+                      onCanvasBlankClick={() => setShowGraphDetail(false)}
+                      onPlanPath={planPath}
+                      onGenerateResource={(concept) => generateResource(concept, 'node')}
+                    />
+                    <WorkspaceDock
+                      activeNav={activeNav}
+                      selectedConcept={selectedConcept}
+                      styleMode={styleMode}
+                      workspaceNote={workspaceNote}
+                      thinkingSteps={thinkingSteps}
+                      versions={versions}
+                      onStyleChange={changeStyleMode}
+                      onAnalyze={analyzeMastery}
+                      onPlanPath={planPath}
+                    />
+                  </>
+                ) : (
+                  <div>
+                    <div className="flex items-center gap-2 px-1 pb-2">
+                      <button type="button" onClick={() => setGraphView('path')} className="rounded-full px-2.5 py-0.5 text-[11px] border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition">← 六边形路径</button>
+                    </div>
+                    <EChartsKnowledgeGraph />
+                  </div>
+                )}
               </div>
             )}
 
@@ -1387,6 +1416,7 @@ function KnowledgePanel({
   conceptDetail,
   showDetail,
   focusNonce,
+  onSwitchToStructure,
   onNodeSelect,
   onCanvasBlankClick,
   onPlanPath,
@@ -1403,6 +1433,7 @@ function KnowledgePanel({
   conceptDetail: any | null
   showDetail: boolean
   focusNonce: number
+  onSwitchToStructure?: () => void
   onNodeSelect: (node: PathNode) => void
   onCanvasBlankClick: () => void
   onPlanPath: () => void
@@ -1457,11 +1488,12 @@ function KnowledgePanel({
         title="知识图谱 / 学习路径"
         icon={Network}
         meta={
-          <div className="flex flex-wrap gap-4 text-xs">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            {onSwitchToStructure && <button type="button" onClick={onSwitchToStructure} className="rounded-full px-2 py-0.5 border border-white/10 text-slate-500 hover:text-amber-300 hover:border-amber-500/30 transition">力导向结构 →</button>}
+            <span className="text-slate-600">|</span>
             <LegendDot color="mint" label="已掌握" />
             <LegendDot color="amber" label="学习中" />
             <LegendDot color="gray" label="待学习" />
-            <span className="text-slate-500">--- 前置依赖</span>
           </div>
         }
       />

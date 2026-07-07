@@ -4,6 +4,7 @@ import { BookOpen, Loader2, Play, RefreshCw, Route, Send, Sparkles } from 'lucid
 import type { ResourceDetail, ResourceVersion, ThinkingStep } from '@/services/api'
 import { Panel, PanelHeader } from './Panel'
 import { cn } from '@/lib/utils'
+import { FurnaceTimeline } from '@/components/resources/FurnaceTimeline'
 import type { CodeRunResult, ExerciseView } from './types'
 
 function textFrom(value: unknown) {
@@ -265,6 +266,7 @@ export function ResourceLibraryPanel({
     ['代码案例', '可发送到代码沙箱继续运行和调试。', 'code', codeCases.length > 0],
     ['听觉讲解', '读取后端生成的 audio_text 讲解稿。', 'audio', Boolean(activeResource?.audio_text)],
     ['审核报告', '展示 Reviewer 辩论审核结论和修改理由。', 'review', Boolean(activeResource?.debate_report)],
+    ['版本演进', '知识熔炉驱动的资源版本历史。', 'versions', true],
   ] as const
 
   useEffect(() => {
@@ -535,6 +537,12 @@ export function ResourceLibraryPanel({
           </div>
         )}
 
+        {activeSection === 'versions' && (
+          <div className="resource-review">
+            <FurnaceTimeline concept={selectedConcept} />
+          </div>
+        )}
+
         {resultText && (
           <div className="resource-result">
             <p className="resource-inspector-title">练习反馈</p>
@@ -561,22 +569,7 @@ export function ResourceLibraryPanel({
           ))}
         </div>
 
-        <div>
-          <p className="resource-inspector-title">版本演进</p>
-          {latestVersion ? (
-            <div className="version-card">
-              <strong>v{latestVersion.version}</strong>
-              <span>{latestVersion.change_reason || '资源已生成并写入版本记录。'}</span>
-              <em>{latestVersion.triggered_by || 'Agent pipeline'}</em>
-            </div>
-          ) : (
-            <div className="version-card muted">
-              <strong>待生成</strong>
-              <span>点击“重新生成”后，这里会显示最新资源版本。</span>
-              <em>resources/versions</em>
-            </div>
-          )}
-        </div>
+        <FurnaceTimeline concept={selectedConcept} />
 
         {hasResource && (
           <div className="resource-feedback">

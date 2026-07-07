@@ -44,6 +44,14 @@ async def get_heatmap(
     if session_id:
         tracker.load_from_session(session_id)
 
+    # 从知识图谱补全全部概念（保持练习过的数据，未练过的用默认值）
+    from app.services.graph_factory import get_graph_store
+    graph = get_graph_store()
+    concepts = graph.get_all_concepts()
+    for c in concepts:
+        name = c.get("name") if isinstance(c, dict) else c
+        tracker.get_or_create_model(name)
+
     return {
         "session_id": session_id,
         "data": tracker.get_heatmap_data(),
@@ -61,6 +69,14 @@ async def get_bkt_status(
     tracker = get_bkt_tracker()
     if session_id:
         tracker.load_from_session(session_id)
+
+    # 从知识图谱补全全部概念
+    from app.services.graph_factory import get_graph_store
+    graph = get_graph_store()
+    concepts = graph.get_all_concepts()
+    for c in concepts:
+        name = c.get("name") if isinstance(c, dict) else c
+        tracker.get_or_create_model(name)
 
     if concept:
         # 只返回指定知识点
@@ -95,6 +111,14 @@ async def analyze_mastery(
     """
     tracker = get_bkt_tracker()
     tracker.load_from_session(session_id)
+
+    # 从知识图谱补全全部概念
+    from app.services.graph_factory import get_graph_store
+    graph = get_graph_store()
+    concepts = graph.get_all_concepts()
+    for c in concepts:
+        name = c.get("name") if isinstance(c, dict) else c
+        tracker.get_or_create_model(name)
 
     # 将重新计算后的 BKT 状态持久化到 mastery_state 表
     tracker.persist_to_session(session_id)

@@ -23,17 +23,21 @@ import { IconBox } from '@/components/ui/icon-box'
 import { Skeleton } from '@/components/ui/skeleton'
 import { graphApi, type GraphData } from '@/services/api'
 
-// 按模块预定义节点配色，未命中的模块使用 FALLBACK_PALETTE
+// 模块配色与后端 _MODULE_COLORS 严格对齐
 const MODULE_COLORS: Record<string, string> = {
-  基础语法: '#6366f1',
-  数据类型: '#10b981',
-  控制流: '#f59e0b',
-  函数: '#ec4899',
-  面向对象: '#06b6d4',
-  标准库: '#8b5cf6',
+  '基础语法': '#3b82f6',
+  '数据结构': '#10b981',
+  '控制流': '#f59e0b',
+  '函数': '#8b5cf6',
+  '文件IO': '#ef4444',
+  '异常处理': '#f97316',
+  '面向对象': '#ec4899',
+  '高级语法': '#06b6d4',
+  '标准库': '#14b8a6',
+  '未分类': '#94a3b8',
 }
 
-const FALLBACK_PALETTE = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#8b5cf6']
+const MODULE_FALLBACK = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#f97316', '#ec4899', '#06b6d4', '#14b8a6', '#94a3b8']
 
 export function KnowledgeGraph() {
   const [graphData, setGraphData] = useState<GraphData | null>(null)
@@ -41,11 +45,30 @@ export function KnowledgeGraph() {
   const chartRef = useRef<HTMLDivElement>(null)
   const chartInstanceRef = useRef<echarts.ECharts | null>(null)
 
-  // 首次加载时获取图谱数据
+  // 首次加载时获取图谱布局数据（含后端预计算坐标/颜色）
   useEffect(() => {
-    graphApi.getGraph().then((res) => {
-      setGraphData(res.data)
+    graphApi.getLayout().then((res) => {
+      // 将 layout 数据转换为 GraphData 格式
+      const layoutData = res.data as { nodes: any[]; edges: any[] };
+      setGraphData({
+        nodes: layoutData.nodes.map((n: any) => ({
+          id: n.id,
+          name: n.name,
+          module: n.module,
+          difficulty: n.difficulty,
+          x: n.x,
+          y: n.y,
+          color: n.color,
+        })),
+        edges: layoutData.edges,
+      })
       setLoading(false)
+    }).catch(() => {
+      // 降级：layout 不可用时回退到基础接口
+      graphApi.getGraph().then((res) => {
+        setGraphData(res.data)
+        setLoading(false)
+      })
     })
   }, [])
 
@@ -53,27 +76,36 @@ export function KnowledgeGraph() {
   useEffect(() => {
     if (!graphData || !chartRef.current) return
 
-    // 提取所有模块作为图例分类
+    // 提取所有模块作为图例分类，优先使用后端下发的颜色
+    const moduleColorMap = new Map<string, string>()
+    graphData.nodes.forEach((n: any) => {
+      if (n.color && !moduleColorMap.has(n.module)) {
+        moduleColorMap.set(n.module, n.color)
+      }
+    })
     const modules = Array.from(new Set(graphData.nodes.map((n) => n.module)))
     const categories = modules.map((name, index) => ({
       name,
       itemStyle: {
-        color: MODULE_COLORS[name] || FALLBACK_PALETTE[index % FALLBACK_PALETTE.length],
+        color: moduleColorMap.get(name) || MODULE_COLORS[name] || MODULE_FALLBACK[index % MODULE_FALLBACK.length],
       },
     }))
 
     const categoryIndex = (module: string) => modules.indexOf(module)
 
-    // 节点大小随难度递增，颜色与所属模块一致
-    const nodes = graphData.nodes.map((n) => ({
+    // 节点大小随难度递增，使用后端预计算坐标与颜色
+    const hasLayout = (graphData.nodes[0] as any)?.x !== undefined;
+    const nodes = graphData.nodes.map((n: any) => ({
       id: n.id,
       name: n.name,
       value: n.difficulty,
       category: categoryIndex(n.module),
-      symbolSize: 24 + n.difficulty * 5,
+      symbolSize: 28 + n.difficulty * 7,
+      x: hasLayout ? n.x : undefined,
+      y: hasLayout ? n.y : undefined,
       label: { show: true, formatter: '{b}', fontSize: 12, fontWeight: 600 },
       itemStyle: {
-        color: MODULE_COLORS[n.module] || FALLBACK_PALETTE[categoryIndex(n.module) % FALLBACK_PALETTE.length],
+        color: n.color || moduleColorMap.get(n.module) || MODULE_COLORS[n.module] || MODULE_FALLBACK[categoryIndex(n.module) % MODULE_FALLBACK.length],
         borderColor: '#fff',
         borderWidth: 2,
         shadowBlur: 10,
@@ -125,14 +157,14 @@ export function KnowledgeGraph() {
         {
           name: 'Python 知识图谱',
           type: 'graph',
-          layout: 'force',
+          layout: hasLayout ? 'none' : 'force',
           data: nodes,
           links,
           categories,
           roam: true,
           draggable: true,
           label: { show: true, position: 'bottom' },
-          force: {
+          force: hasLayout ? undefined : {
             repulsion: 480,
             edgeLength: [80, 150],
             gravity: 0.08,
@@ -168,7 +200,7 @@ export function KnowledgeGraph() {
           <IconBox icon={Share2} variant="violet" size="sm" />
           <div>
             <h3 className="text-base font-bold text-slate-900">Python 知识图谱</h3>
-            <p className="text-xs text-slate-500">力导向图 · 按模块着色</p>
+            <p className="text-xs text-slate-500">力导向图 · 按模块着色 · {graphData?.nodes.length || 0} 节点</p>
           </div>
         </div>
       </div>
