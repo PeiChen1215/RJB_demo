@@ -23,6 +23,19 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    port: 4173,
+    proxy: {
+      '/api': {
+        target: process.env.VITE_API_TARGET || 'http://localhost:8001',
+        changeOrigin: true,
+      },
+      '/health': {
+        target: process.env.VITE_API_TARGET || 'http://localhost:8001',
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
     chunkSizeWarningLimit: 1600,
     rollupOptions: {
