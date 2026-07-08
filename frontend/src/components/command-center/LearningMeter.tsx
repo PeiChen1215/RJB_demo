@@ -6,8 +6,8 @@ export function LearningMeter({ stats }: { stats: SessionStats | null }) {
   return (
     <div className="sidebar-card">
       <div>
-        <p className="text-sm text-slate-400">今日学习时长</p>
-        <strong className="mt-1 block text-3xl text-white">{minutes ?? '--'} <span className="text-base text-slate-400">分钟</span></strong>
+        <p className="text-sm font-semibold text-slate-600">今日学习时长</p>
+        <strong className="mt-1 block text-3xl text-slate-900">{minutes ?? '--'} <span className="text-base text-slate-600">分钟</span></strong>
         <p className="text-xs text-slate-500">{minutes === null ? '暂无真实时长数据' : '目标 60 分钟'}</p>
       </div>
       <div className="radial-meter" style={{ ['--value' as string]: `${progress * 3.6}deg` }}>

@@ -6,26 +6,34 @@ import {
   BookOpen,
   Brain,
   Braces,
+  ChevronRight,
   Code2,
+  Clock3,
   FlaskConical,
   Hexagon,
+  Home,
   Layers3,
   Loader2,
+  LockKeyhole,
+  Mail,
   MessageSquare,
   Mic,
   Network,
   Play,
   RefreshCw,
   Route,
+  Search,
   Send,
   Server,
   ShieldCheck,
+  Star,
   TerminalSquare,
   UserRound,
 } from 'lucide-react'
 
 import {
   behaviorApi,
+  authApi,
   codeApi,
   evaluationApi,
   graphApi,
@@ -34,7 +42,11 @@ import {
   type AgentResponse,
   type CodeVariable,
   type GraphData,
+  type LearningEvent,
+  type LearningPlanResponse,
   type ResourceDetail,
+  type ResourceEvolutionResponse,
+  type ResourceFeedbackStats,
   type ResourceVersion,
   type SessionResponse,
   type ThinkingStep,
@@ -76,6 +88,94 @@ const NAV_ITEMS: Array<{ key: NavKey; label: string; icon: ComponentType<{ class
   { key: 'chat', label: '学习对话', icon: MessageSquare },
   { key: 'code', label: '代码沙箱', icon: Code2 },
   { key: 'progress', label: '掌握进度', icon: BarChart3 },
+]
+
+type CourseCard = {
+  id: string
+  title: string
+  category: string
+  level: string
+  teacher: string
+  duration: string
+  status: 'ready' | 'empty'
+  accent: 'teal' | 'orange' | 'blue' | 'green'
+  summary: string
+  tags: string[]
+}
+
+const COURSE_CATALOG: CourseCard[] = [
+  {
+    id: 'python',
+    title: 'Python 程序设计基础',
+    category: '程序设计',
+    level: '入门到进阶',
+    teacher: '智学蜂巢教研组',
+    duration: '6 个模块',
+    status: 'ready',
+    accent: 'teal',
+    summary: '从基础语法、控制流到文件操作，配合练习、代码运行和个性化辅导完成入门训练。',
+    tags: ['知识图谱', '代码练习', 'AI 辅导'],
+  },
+  {
+    id: 'data-structure',
+    title: '数据结构可视化训练营',
+    category: '计算机基础',
+    level: '进阶',
+    teacher: '算法教研组',
+    duration: '8 个模块',
+    status: 'empty',
+    accent: 'blue',
+    summary: '用动画和案例理解数组、链表、栈、队列、树与图。',
+    tags: ['动画演示', '算法思维', '待开放'],
+  },
+  {
+    id: 'ai-literacy',
+    title: '人工智能通识与提示词实践',
+    category: 'AI 通识',
+    level: '零基础',
+    teacher: 'AI 创新中心',
+    duration: '5 个模块',
+    status: 'empty',
+    accent: 'orange',
+    summary: '从大模型能力边界、提示词方法到学习场景应用，建立 AI 使用素养。',
+    tags: ['大模型', '提示词', '待开放'],
+  },
+  {
+    id: 'english-speaking',
+    title: '英语口语情景对话',
+    category: '语言学习',
+    level: '日常交流',
+    teacher: '语言训练实验室',
+    duration: '12 个场景',
+    status: 'empty',
+    accent: 'green',
+    summary: '围绕校园、面试、旅行和学术交流构建口语训练闭环。',
+    tags: ['情景对话', '听说训练', '待开放'],
+  },
+  {
+    id: 'math-modeling',
+    title: '数学建模方法入门',
+    category: '数理基础',
+    level: '竞赛预备',
+    teacher: '建模工作坊',
+    duration: '7 个专题',
+    status: 'empty',
+    accent: 'teal',
+    summary: '覆盖模型假设、数据处理、优化求解和论文表达。',
+    tags: ['建模', '数据分析', '待开放'],
+  },
+  {
+    id: 'web-design',
+    title: '前端交互设计基础',
+    category: '软件工程',
+    level: '实践课',
+    teacher: '交互设计教研组',
+    duration: '9 个项目',
+    status: 'empty',
+    accent: 'blue',
+    summary: '从布局、组件状态到可用性设计，完成一个真实 Web 应用。',
+    tags: ['React', '交互设计', '待开放'],
+  },
 ]
 
 const FALLBACK_TARGET_CONCEPT = '变量与赋值'
@@ -298,11 +398,8 @@ function edgePath(source: PathNode, target: PathNode) {
   return `M${source.x} ${source.y} C${midX} ${source.y + lift}, ${midX} ${target.y - lift}, ${target.x} ${target.y}`
 }
 
-function isPathEdge(edge: KnowledgeEdge, plannedPath: string[]) {
-  return plannedPath.some((name, index) => {
-    const next = plannedPath[index + 1]
-    return next && edge.source === name && edge.target === next
-  })
+function buildPathEdgeKey(source: string, target: string) {
+  return `${source}->${target}`
 }
 
 function inferCodeVariables(code: string, output: string): CodeVariable[] {
@@ -482,6 +579,17 @@ function extractProfileFromResponse(response?: AgentResponse | null) {
 }
 
 function App() {
+  const [courseMode, setCourseMode] = useState<'portal' | 'python' | 'empty'>(() => {
+    if (typeof window === 'undefined') return 'portal'
+    if (window.location.hash.startsWith('#/course/python')) return 'python'
+    if (window.location.hash.startsWith('#/course/')) return 'empty'
+    return 'portal'
+  })
+  const [selectedCourseId, setSelectedCourseId] = useState(() => {
+    if (typeof window === 'undefined') return 'python'
+    const match = window.location.hash.match(/^#\/course\/([^/]+)/)
+    return match?.[1] || 'python'
+  })
   const [activeNav, setActiveNav] = useState<NavKey>('graph')
   const [session, setSession] = useState<SessionResponse | null>(null)
   const [stats, setStats] = useState<SessionStats | null>(null)
@@ -507,6 +615,10 @@ function App() {
   const [workspaceNote, setWorkspaceNote] = useState('点击知识节点、Agent 或工具按钮开始联动。')
   const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([])
   const [versions, setVersions] = useState<ResourceVersion[]>([])
+  const [learningPlan, setLearningPlan] = useState<LearningPlanResponse | null>(null)
+  const [learningEvents, setLearningEvents] = useState<LearningEvent[]>([])
+  const [resourceEvolution, setResourceEvolution] = useState<ResourceEvolutionResponse | null>(null)
+  const [feedbackStats, setFeedbackStats] = useState<ResourceFeedbackStats | null>(null)
   const [resourcePackage, setResourcePackage] = useState<ResourceDetail | null>(null)
   const [resourcePanelLoading, setResourcePanelLoading] = useState(false)
   const [conceptDetail, setConceptDetail] = useState<any | null>(null)
@@ -540,11 +652,45 @@ function App() {
   const [codeLoading, setCodeLoading] = useState(false)
   const [resourceStatus, setResourceStatus] = useState('资源生成接口待命')
   const [resourceLoading, setResourceLoading] = useState(false)
+  const [authUser, setAuthUser] = useState(() => {
+    if (typeof window === 'undefined') return ''
+    return window.localStorage.getItem('eduhive.username') ?? ''
+  })
+  const [loginUsername, setLoginUsername] = useState(() => {
+    if (typeof window === 'undefined') return ''
+    return window.localStorage.getItem('eduhive.username') ?? ''
+  })
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginMode, setLoginMode] = useState<'login' | 'register'>('login')
+  const [authLoading, setAuthLoading] = useState(false)
+  const [loginStatus, setLoginStatus] = useState(() => {
+    if (typeof window === 'undefined') return '请使用后端账号登录。'
+    const savedUser = window.localStorage.getItem('eduhive.username')
+    return savedUser ? `已登录：${savedUser}` : '请使用后端账号登录。'
+  })
 
   useEffect(() => {
     const syncRoute = () => {
-      const key = window.location.hash.replace('#/', '') as NavKey
+      const hash = window.location.hash || '#/portal'
+      if (hash === '#/portal' || hash === '#/' || hash === '') {
+        setCourseMode('portal')
+        return
+      }
+
+      const courseMatch = hash.match(/^#\/course\/([^/]+)(?:\/([^?]+))?/)
+      if (courseMatch) {
+        const courseId = courseMatch[1]
+        const navKey = courseMatch[2] as NavKey | undefined
+        setSelectedCourseId(courseId)
+        setCourseMode(courseId === 'python' ? 'python' : 'empty')
+        if (navKey && NAV_ITEMS.some((item) => item.key === navKey)) setActiveNav(navKey)
+        return
+      }
+
+      const key = hash.replace('#/', '') as NavKey
       if (NAV_ITEMS.some((item) => item.key === key)) {
+        setCourseMode('python')
+        setSelectedCourseId('python')
         setActiveNav(key)
       }
     }
@@ -555,15 +701,89 @@ function App() {
 
   const navigateTo = (nav: NavKey, note?: string) => {
     const wasGraph = activeNav === 'graph'
+    setCourseMode('python')
+    setSelectedCourseId('python')
     setActiveNav(nav)
     if (nav === 'graph') {
       setShowGraphDetail(true)
       if (!wasGraph) setGraphFocusNonce((value) => value + 1)
     }
-    if (window.location.hash !== `#/${nav}`) {
-      window.location.hash = `/${nav}`
+    if (window.location.hash !== `#/course/python/${nav}`) {
+      window.location.hash = `/course/python/${nav}`
     }
     setWorkspaceNote(note ?? `已切换到「${NAV_ITEMS.find((item) => item.key === nav)?.label ?? '工作台'}」。`)
+  }
+
+  const openPortal = () => {
+    setCourseMode('portal')
+    window.location.hash = '/portal'
+  }
+
+  const openCourse = (course: CourseCard) => {
+    setSelectedCourseId(course.id)
+    if (course.status === 'ready') {
+      setCourseMode('python')
+      setActiveNav('graph')
+      setShowGraphDetail(true)
+      setGraphFocusNonce((value) => value + 1)
+      window.location.hash = '/course/python/graph'
+      setWorkspaceNote('已进入 Python 课程，建议先查看知识图谱并规划学习路径。')
+      return
+    }
+
+    setCourseMode('empty')
+    window.location.hash = `/course/${course.id}`
+  }
+
+  const submitPortalAuth = async (continueCourse?: CourseCard) => {
+    if (authUser) {
+      setLoginStatus(`已登录：${authUser}`)
+      if (continueCourse) openCourse(continueCourse)
+      return
+    }
+
+    const username = loginUsername.trim()
+    if (!username || !loginPassword.trim()) {
+      setLoginStatus('请输入账号和密码。')
+      return
+    }
+
+    setAuthLoading(true)
+    setLoginStatus(loginMode === 'register' ? '正在注册账号...' : '正在登录...')
+    try {
+      const response = loginMode === 'register'
+        ? await authApi.register(username, loginPassword)
+        : await authApi.login(username, loginPassword)
+      const { access_token, username: returnedUsername } = response.data
+      window.localStorage.setItem('eduhive.auth_token', access_token)
+      window.localStorage.setItem('eduhive.username', returnedUsername || username)
+      setAuthUser(returnedUsername || username)
+      setLoginUsername(returnedUsername || username)
+      setLoginPassword('')
+      setLoginStatus(loginMode === 'register' ? '注册成功，已自动登录。' : '登录成功。')
+      if (continueCourse) openCourse(continueCourse)
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail
+      setLoginStatus(typeof detail === 'string' ? detail : '登录接口暂不可用，请先启动后端服务或检查账号密码。')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  const logoutPortal = async () => {
+    setAuthLoading(true)
+    try {
+      if (window.localStorage.getItem('eduhive.auth_token')) await authApi.logout()
+    } catch {
+      // 本地退出优先，后端 token 黑名单失败时不阻断用户操作。
+    } finally {
+      window.localStorage.removeItem('eduhive.auth_token')
+      window.localStorage.removeItem('eduhive.username')
+      setAuthUser('')
+      setLoginPassword('')
+      setLoginStatus('已退出登录。')
+      setAuthLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -652,13 +872,31 @@ function App() {
     const sessionId = session.session_id
 
     async function loadLearningSignals() {
-      const [statsRes, heatmapRes] = await Promise.allSettled([
+      const [statsRes, heatmapRes, profileRes, planRes, eventsRes] = await Promise.allSettled([
         sessionApi.getStats(sessionId),
         evaluationApi.getHeatmap(sessionId),
+        sessionApi.getProfile(sessionId),
+        sessionApi.getLearningPlan(sessionId),
+        sessionApi.getEvents(sessionId, 8),
       ])
 
       if (statsRes.status === 'fulfilled') setStats(statsRes.value.data)
       if (heatmapRes.status === 'fulfilled') setHeatmap(heatmapRes.value.data.data || [])
+      if (profileRes.status === 'fulfilled' && !profileRes.value.data?.error) {
+        setSession((current) => current && current.session_id === sessionId
+          ? { ...current, profile: { ...current.profile, ...profileRes.value.data } }
+          : current)
+      }
+      if (planRes.status === 'fulfilled') {
+        setLearningPlan(planRes.value.data)
+      } else {
+        setLearningPlan(null)
+      }
+      if (eventsRes.status === 'fulfilled') {
+        setLearningEvents([...(eventsRes.value.data.events || [])].sort((a, b) =>
+          String(b.created_at || '').localeCompare(String(a.created_at || ''))
+        ))
+      }
     }
 
     loadLearningSignals()
@@ -942,10 +1180,12 @@ function App() {
     setWorkspaceNote(`正在读取「${concept}」的学习资源包...`)
     let loadedResource: ResourceDetail | null = null
     try {
-      const [latestRes, thinkingRes, versionRes] = await Promise.allSettled([
+      const [latestRes, thinkingRes, versionRes, evolutionRes, feedbackStatsRes] = await Promise.allSettled([
         resourceApi.getLatest(concept),
         resourceApi.getThinkingPath(concept),
         resourceApi.getVersions(concept),
+        resourceApi.getEvolution(concept),
+        resourceApi.getFeedbackStats(concept),
       ])
       if (latestRes.status === 'fulfilled') {
         const resource = latestRes.value.data.resource
@@ -956,12 +1196,16 @@ function App() {
       }
       if (thinkingRes.status === 'fulfilled') setThinkingSteps(thinkingRes.value.data.steps || [])
       if (versionRes.status === 'fulfilled') setVersions(versionRes.value.data.versions || [])
+      if (evolutionRes.status === 'fulfilled') setResourceEvolution(evolutionRes.value.data)
+      if (feedbackStatsRes.status === 'fulfilled') setFeedbackStats(feedbackStatsRes.value.data)
       if (session) {
         behaviorApi.log(session.session_id, 'resource_switched', concept, { surface }).catch(() => undefined)
       }
     } catch {
       setResourceStatus('资源详情接口暂不可用')
       setWorkspaceNote('未能读取资源详情，请确认后端服务已启动。')
+      setResourceEvolution(null)
+      setFeedbackStats(null)
     } finally {
       setResourcePanelLoading(false)
     }
@@ -1065,6 +1309,9 @@ function App() {
       confusion_marked: data.confusion_marked,
       error_report: data.error_report,
     })
+    resourceApi.getFeedbackStats(concept)
+      .then((res) => setFeedbackStats(res.data))
+      .catch(() => undefined)
   }
 
   const judgeResourceExercise = async (exercise: Record<string, any>, codeText: string) => {
@@ -1168,11 +1415,41 @@ function App() {
     }
   }
 
+  const selectedCourse = COURSE_CATALOG.find((course) => course.id === selectedCourseId) ?? COURSE_CATALOG[0]
+
+  if (courseMode === 'portal') {
+    return (
+      <CoursePortal
+        courses={COURSE_CATALOG}
+        onOpenCourse={openCourse}
+        authUser={authUser}
+        loginUsername={loginUsername}
+        loginPassword={loginPassword}
+        loginMode={loginMode}
+        loginStatus={loginStatus}
+        authLoading={authLoading}
+        onUsernameChange={setLoginUsername}
+        onPasswordChange={setLoginPassword}
+        onLoginModeChange={setLoginMode}
+        onSubmitAuth={submitPortalAuth}
+        onLogout={logoutPortal}
+      />
+    )
+  }
+
+  if (courseMode === 'empty') {
+    return <EmptyCoursePage course={selectedCourse} onBack={openPortal} />
+  }
+
   return (
     <div className={cn('command-shell min-h-screen text-slate-100', `style-mode-${styleMode}`)}>
       <HexBackdrop />
       <aside className="command-sidebar">
         <BrandBlock />
+        <button type="button" onClick={openPortal} className="course-back-link">
+          <Home className="h-4 w-4" />
+          课程广场
+        </button>
         <nav className="mt-10 space-y-3">
           {NAV_ITEMS.map((item) => (
             <button
@@ -1204,6 +1481,17 @@ function App() {
             resourceLoading={resourceLoading}
           />
 
+          <CourseStudyHeader
+            course={COURSE_CATALOG[0]}
+            activeNav={activeNav}
+            selectedConcept={selectedConcept}
+            masteredCount={masteredCount}
+            totalConcepts={graphConcepts.size}
+            averageMastery={averageMastery}
+            onBack={openPortal}
+            onNavigate={navigateTo}
+          />
+
           <section className="module-page flex-1">
             {activeNav === 'profile' && (
               <div className="module-grid profile-page">
@@ -1216,6 +1504,8 @@ function App() {
                   workspaceNote={workspaceNote}
                   thinkingSteps={thinkingSteps}
                   versions={versions}
+                  learningPlan={learningPlan}
+                  learningEvents={learningEvents}
                   onStyleChange={changeStyleMode}
                   onAnalyze={analyzeMastery}
                   onPlanPath={planPath}
@@ -1252,6 +1542,8 @@ function App() {
                       workspaceNote={workspaceNote}
                       thinkingSteps={thinkingSteps}
                       versions={versions}
+                      learningPlan={learningPlan}
+                      learningEvents={learningEvents}
                       onStyleChange={changeStyleMode}
                       onAnalyze={analyzeMastery}
                       onPlanPath={planPath}
@@ -1276,6 +1568,8 @@ function App() {
                   resourceStatus={resourceStatus}
                   loading={resourcePanelLoading}
                   versions={versions}
+                  evolution={resourceEvolution}
+                  feedbackStats={feedbackStats}
                   thinkingSteps={thinkingSteps}
                   onGenerateResource={() => generateResource(resourceConcept, 'resource')}
                   onRefresh={() => loadResource(resourceConcept, 'refresh')}
@@ -1299,6 +1593,8 @@ function App() {
                   workspaceNote={workspaceNote}
                   thinkingSteps={thinkingSteps}
                   versions={versions}
+                  learningPlan={learningPlan}
+                  learningEvents={learningEvents}
                   onStyleChange={changeStyleMode}
                   onAnalyze={analyzeMastery}
                   onPlanPath={planPath}
@@ -1324,6 +1620,8 @@ function App() {
                   workspaceNote={workspaceNote}
                   thinkingSteps={thinkingSteps}
                   versions={versions}
+                  learningPlan={learningPlan}
+                  learningEvents={learningEvents}
                   onStyleChange={changeStyleMode}
                   onAnalyze={analyzeMastery}
                   onPlanPath={planPath}
@@ -1345,6 +1643,19 @@ function App() {
                     setCodeOutput(SAMPLE_OUTPUT)
                     setCodeVariables(SAMPLE_VARIABLES)
                   }}
+                />
+                <WorkspaceDock
+                  activeNav={activeNav}
+                  selectedConcept={selectedConcept}
+                  styleMode={styleMode}
+                  workspaceNote={workspaceNote}
+                  thinkingSteps={thinkingSteps}
+                  versions={versions}
+                  learningPlan={learningPlan}
+                  learningEvents={learningEvents}
+                  onStyleChange={changeStyleMode}
+                  onAnalyze={analyzeMastery}
+                  onPlanPath={planPath}
                 />
               </div>
             )}
@@ -1369,6 +1680,8 @@ function App() {
                   workspaceNote={workspaceNote}
                   thinkingSteps={thinkingSteps}
                   versions={versions}
+                  learningPlan={learningPlan}
+                  learningEvents={learningEvents}
                   onStyleChange={changeStyleMode}
                   onAnalyze={analyzeMastery}
                   onPlanPath={planPath}
@@ -1378,6 +1691,328 @@ function App() {
           </section>
         </div>
       </main>
+    </div>
+  )
+}
+
+type CoursePortalProps = {
+  courses: CourseCard[]
+  onOpenCourse: (course: CourseCard) => void
+  authUser: string
+  loginUsername: string
+  loginPassword: string
+  loginMode: 'login' | 'register'
+  loginStatus: string
+  authLoading: boolean
+  onUsernameChange: (value: string) => void
+  onPasswordChange: (value: string) => void
+  onLoginModeChange: (value: 'login' | 'register') => void
+  onSubmitAuth: (continueCourse?: CourseCard) => void
+  onLogout: () => void
+}
+
+function CoursePortal({
+  courses,
+  onOpenCourse,
+  authUser,
+  loginUsername,
+  loginPassword,
+  loginMode,
+  loginStatus,
+  authLoading,
+  onUsernameChange,
+  onPasswordChange,
+  onLoginModeChange,
+  onSubmitAuth,
+  onLogout,
+}: CoursePortalProps) {
+  const featured = courses[0]
+  const categories = ['全部课程', ...Array.from(new Set(courses.map((course) => course.category)))]
+  const [activeCategory, setActiveCategory] = useState('全部课程')
+  const [courseQuery, setCourseQuery] = useState('')
+  const [loginCardPulse, setLoginCardPulse] = useState(false)
+  const loginCardRef = useRef<HTMLFormElement | null>(null)
+  const coursesRef = useRef<HTMLElement | null>(null)
+  const filteredCourses = useMemo(() => {
+    const keyword = courseQuery.trim().toLowerCase()
+    return courses.filter((course) => {
+      const matchesCategory = activeCategory === '全部课程' || course.category === activeCategory
+      const searchPool = [course.title, course.category, course.level, course.teacher, course.summary, ...course.tags]
+        .join(' ')
+        .toLowerCase()
+      return matchesCategory && (!keyword || searchPool.includes(keyword))
+    })
+  }, [activeCategory, courseQuery, courses])
+
+  const focusLoginCard = () => {
+    loginCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setLoginCardPulse(true)
+    window.setTimeout(() => setLoginCardPulse(false), 900)
+    if (!authUser) {
+      window.setTimeout(() => {
+        loginCardRef.current?.querySelector<HTMLInputElement>('input[name="portal-username"]')?.focus()
+      }, 280)
+    }
+  }
+
+  const showCourseResults = () => {
+    coursesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  return (
+    <div className="course-portal min-h-screen">
+      <header className="portal-nav">
+        <BrandBlock />
+        <nav>
+          {categories.map((category) => (
+            <button
+              key={category}
+              type="button"
+              className={activeCategory === category ? 'active' : ''}
+              aria-pressed={activeCategory === category}
+              onClick={() => {
+                setActiveCategory(category)
+                coursesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }}
+            >
+              {category}
+            </button>
+          ))}
+        </nav>
+        <div className="portal-login">
+          <button type="button" className="portal-login-status" onClick={focusLoginCard}>
+            <Mail className="h-4 w-4" /> {authUser || '未登录'}
+          </button>
+          <button type="button" onClick={authUser ? onLogout : focusLoginCard} disabled={authLoading}>
+            <LockKeyhole className="h-4 w-4" /> {authUser ? '退出' : '登录'}
+          </button>
+        </div>
+      </header>
+
+      <main className="portal-main">
+        <section className="portal-hero">
+          <div className="portal-hero-copy">
+            <p className="portal-kicker">AI 驱动的个性化课程空间</p>
+            <h1><span>选择课程</span><span>进入你的智学蜂巢</span></h1>
+            <span>从目标出发，系统会结合你的学习记录与掌握情况，推荐更适合当前阶段的课程内容。</span>
+            <div className="portal-search">
+              <Search className="h-5 w-5" />
+              <input
+                value={courseQuery}
+                onChange={(event) => setCourseQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') showCourseResults()
+                }}
+                placeholder="搜索 Python 文件读写、数据结构、AI 通识"
+                aria-label="课程搜索"
+              />
+              <button type="button" onClick={showCourseResults}>搜索课程</button>
+            </div>
+            <div className="portal-hero-actions">
+              <button type="button" className="portal-primary-action" onClick={() => onOpenCourse(featured)}>
+                进入推荐课程 <ChevronRight className="h-4 w-4" />
+              </button>
+              <button type="button" className="portal-ghost-action" onClick={focusLoginCard}>
+                {authUser ? '查看学习账户' : '登录后同步学习记录'}
+              </button>
+            </div>
+          </div>
+          <form ref={loginCardRef} className={cn('portal-login-card', loginCardPulse && 'is-attention')} onSubmit={(event) => {
+            event.preventDefault()
+            onSubmitAuth()
+          }}>
+            <strong>{authUser ? '学习账户' : loginMode === 'register' ? '创建学习账户' : '登录学习账户'}</strong>
+            {authUser ? (
+              <>
+                <div className="portal-account-panel">
+                  <span>当前账号</span>
+                  <b>{authUser}</b>
+                </div>
+                <button type="button" onClick={() => onOpenCourse(featured)}>继续学习</button>
+                <button type="button" className="portal-secondary-button" onClick={onLogout} disabled={authLoading}>退出登录</button>
+              </>
+            ) : (
+              <>
+                <div className="portal-login-tabs" role="group" aria-label="登录模式">
+                  <button type="button" className={loginMode === 'login' ? 'active' : ''} onClick={() => onLoginModeChange('login')}>登录</button>
+                  <button type="button" className={loginMode === 'register' ? 'active' : ''} onClick={() => onLoginModeChange('register')}>注册</button>
+                </div>
+                <label>
+                  <span>账号</span>
+                  <input name="portal-username" value={loginUsername} onChange={(event) => onUsernameChange(event.target.value)} placeholder="请输入用户名或邮箱" autoComplete="username" />
+                </label>
+                <label>
+                  <span>密码</span>
+                  <input value={loginPassword} onChange={(event) => onPasswordChange(event.target.value)} placeholder="请输入密码" type="password" autoComplete={loginMode === 'register' ? 'new-password' : 'current-password'} />
+                </label>
+                <button type="submit" disabled={authLoading}>
+                  {authLoading ? '处理中...' : loginMode === 'register' ? '注册' : '登录'}
+                </button>
+              </>
+            )}
+            <p>{loginStatus}</p>
+          </form>
+        </section>
+
+        <section className="portal-section" ref={coursesRef}>
+          <div className="portal-section-title">
+            <div>
+              <p>课程中心</p>
+              <h2>{activeCategory === '全部课程' ? '推荐课程' : activeCategory}</h2>
+            </div>
+            <span>{filteredCourses.length ? `已为你筛选出 ${filteredCourses.length} 门课程。开放课程可直接进入学习，建设中的课程会持续更新。` : '没有找到匹配课程，可以切换分类或修改关键词。'}</span>
+          </div>
+          <div className="course-card-grid">
+            {filteredCourses.map((course) => (
+              <button key={course.id} type="button" onClick={() => onOpenCourse(course)} className={cn('course-card', `course-card-${course.accent}`)}>
+                <div className="course-card-cover">
+                  <BookOpen className="h-7 w-7" />
+                  <span>{course.status === 'ready' ? '已开放' : '建设中'}</span>
+                </div>
+                <div className="course-card-body">
+                  <p>{course.category} · {course.level}</p>
+                  <h3>{course.title}</h3>
+                  <span>{course.summary}</span>
+                  <div className="course-card-meta">
+                    <em><UserRound className="h-3.5 w-3.5" />{course.teacher}</em>
+                    <em><Clock3 className="h-3.5 w-3.5" />{course.duration}</em>
+                  </div>
+                  <div className="course-card-tags">
+                    {course.tags.map((tag) => <i key={tag}>{tag}</i>)}
+                  </div>
+                </div>
+                <strong>{course.status === 'ready' ? '进入课程' : '查看状态'}<ChevronRight className="h-4 w-4" /></strong>
+              </button>
+            ))}
+            {!filteredCourses.length && (
+              <div className="course-empty-result">
+                <Search className="h-6 w-6" />
+                <strong>暂无匹配课程</strong>
+                <span>试试“Python”“AI”或切换到全部课程。</span>
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
+    </div>
+  )
+}
+
+function EmptyCoursePage({ course, onBack }: { course: CourseCard; onBack: () => void }) {
+  return (
+    <div className="empty-course-page min-h-screen">
+      <header className="portal-nav">
+        <BrandBlock />
+        <button type="button" onClick={onBack} className="portal-back-button"><Home className="h-4 w-4" /> 返回课程广场</button>
+      </header>
+      <main className="empty-course-main">
+        <div className={cn('empty-course-card', `course-card-${course.accent}`)}>
+          <div className="course-card-cover">
+            <BookOpen className="h-8 w-8" />
+            <span>建设中</span>
+          </div>
+          <p>{course.category} · {course.level}</p>
+          <h1>{course.title}</h1>
+          <span>{course.summary}</span>
+          <strong>暂无课程内容哦~</strong>
+          <button type="button" onClick={onBack}>去选择已开放课程</button>
+        </div>
+      </main>
+    </div>
+  )
+}
+
+function CourseStudyHeader({
+  course,
+  activeNav,
+  selectedConcept,
+  masteredCount,
+  totalConcepts,
+  averageMastery,
+  onBack,
+  onNavigate,
+}: {
+  course: CourseCard
+  activeNav: NavKey
+  selectedConcept: string
+  masteredCount: number
+  totalConcepts: number
+  averageMastery: number
+  onBack: () => void
+  onNavigate: (nav: NavKey) => void
+}) {
+  const activeItem = NAV_ITEMS.find((item) => item.key === activeNav) ?? NAV_ITEMS[0]
+  const moduleDescriptions: Record<NavKey, string> = {
+    profile: '查看画像与协作状态',
+    graph: '规划知识路径',
+    resources: '学习讲义与练习',
+    chat: '向 AI 助教提问',
+    code: '运行 Python 代码',
+    progress: '复盘掌握度变化',
+  }
+  const statCards = [
+    { label: '学习模块', value: NAV_ITEMS.length, unit: '个', icon: Layers3 },
+    { label: '知识节点', value: totalConcepts || '待载入', unit: totalConcepts ? '个' : '', icon: Network },
+    { label: '已掌握', value: masteredCount, unit: '个', icon: Brain },
+    { label: '平均掌握', value: `${averageMastery}%`, unit: '', icon: BarChart3 },
+  ]
+
+  return (
+    <div className="course-study-header">
+      <div className="course-cover-main">
+        <button type="button" onClick={onBack} className="course-back-button"><Home className="h-4 w-4" /> 课程广场</button>
+        <p>{course.category} · {course.level}</p>
+        <div className="course-cover-title-row">
+          <h2>{course.title}</h2>
+          <em>智慧课程</em>
+        </div>
+        <span>{course.summary}</span>
+        <div className="course-cover-tags">
+          <strong>{course.teacher}</strong>
+          <i>{course.duration}</i>
+          {course.tags.map((tag) => <i key={tag}>{tag}</i>)}
+        </div>
+      </div>
+
+      <div className="course-cover-system">
+        <div className="course-system-title">
+          <span>课程学习面板</span>
+          <strong>当前模块和进度会随你的学习记录更新</strong>
+        </div>
+        <div className="course-current-goal">
+          <activeItem.icon className="h-5 w-5" />
+          <div>
+            <span>当前学习空间</span>
+            <strong>{activeItem.label}</strong>
+          </div>
+        </div>
+        <div className="course-goal-pill">
+          <Route className="h-4 w-4" />
+          <span>目标：{selectedConcept}</span>
+        </div>
+        <div className="course-stat-stack">
+          {statCards.map((item) => (
+            <div key={item.label}>
+              <item.icon className="h-4 w-4" />
+              <span>{item.label}</span>
+              <strong>{item.value}<small>{item.unit}</small></strong>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <nav className="course-cover-tabs">
+        {NAV_ITEMS.map((item) => (
+          <button key={item.key} type="button" onClick={() => onNavigate(item.key)} className={cn(activeNav === item.key && 'active')}>
+            <item.icon className="h-4 w-4" />
+            <span>
+              <strong>{item.label}</strong>
+              <small>{moduleDescriptions[item.key]}</small>
+            </span>
+          </button>
+        ))}
+      </nav>
+      <span className="course-study-tip"><Star className="h-4 w-4" /> 当前正在学习「{selectedConcept}」，你可以在{activeItem.label}中继续推进。</span>
     </div>
   )
 }
@@ -1444,16 +2079,31 @@ function KnowledgePanel({
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const mapX = useMotionValue(0)
   const [canvasSize, setCanvasSize] = useState({ width: 920, height: 355 })
-  const nodeByTitle = new Map(nodes.map((node) => [node.title, node]))
-  const renderedEdges = edges
+  const plannedNodeSet = useMemo(() => new Set(plannedPath), [plannedPath])
+  const plannedEdgeSet = useMemo(() => {
+    const edgeSet = new Set<string>()
+    plannedPath.forEach((name, index) => {
+      const next = plannedPath[index + 1]
+      if (next) edgeSet.add(buildPathEdgeKey(name, next))
+    })
+    return edgeSet
+  }, [plannedPath])
+  const nodeByTitle = useMemo(() => new Map(nodes.map((node) => [node.title, node])), [nodes])
+  const renderedEdges = useMemo(() => edges
     .map((edge) => {
       const source = nodeByTitle.get(edge.source)
       const target = nodeByTitle.get(edge.target)
       if (!source || !target) return null
-      return { edge, source, target, d: edgePath(source, target), active: isPathEdge(edge, plannedPath) }
+      return {
+        edge,
+        source,
+        target,
+        d: edgePath(source, target),
+        active: plannedEdgeSet.has(buildPathEdgeKey(edge.source, edge.target)),
+      }
     })
-    .filter((edge): edge is NonNullable<typeof edge> => Boolean(edge))
-  const activeEdges = renderedEdges.filter((item) => item.active)
+    .filter((edge): edge is NonNullable<typeof edge> => Boolean(edge)), [edges, nodeByTitle, plannedEdgeSet])
+  const activeEdges = useMemo(() => renderedEdges.filter((item) => item.active), [renderedEdges])
   const mapPixelWidth = Math.max(1900, nodes.length * 260)
   const dragLeft = -Math.max(820, mapPixelWidth - 920)
   const nodeX = selectedNode ? (selectedNode.x / 100) * mapPixelWidth : 0
@@ -1547,7 +2197,7 @@ function KnowledgePanel({
               index={index}
               selected={node.id === selectedNodeId || node.title === selectedConcept}
               detailOpen={showDetail && (node.id === selectedNodeId || node.title === selectedConcept)}
-              onPlannedPath={plannedPath.includes(node.title)}
+              onPlannedPath={plannedNodeSet.has(node.title)}
               known={graphConcepts.size === 0 || graphConcepts.has(node.title)}
               onSelect={() => onNodeSelect(node)}
             />
@@ -1624,6 +2274,8 @@ function GraphNode({
   onPlannedPath: boolean
   onSelect: () => void
 }) {
+  const waveCount = selected ? 3 : onPlannedPath ? 2 : 0
+
   return (
     <motion.button
       type="button"
@@ -1634,11 +2286,9 @@ function GraphNode({
       animate={{ opacity: 1, scale: 1 }}
       transition={{ delay: index * 0.05, duration: 0.35 }}
     >
-      {(selected || onPlannedPath) && (
+      {waveCount > 0 && (
         <div className="node-wave-field" aria-hidden="true">
-          <span />
-          <span />
-          <span />
+          {Array.from({ length: waveCount }).map((_, index) => <span key={index} />)}
         </div>
       )}
       <div className="graph-node-icon">
@@ -1666,12 +2316,13 @@ function ChatCommand({
   messages: ChatMessage[]
   loading: boolean
   targetConcept: string
-  onSend: () => void
+  onSend: (messageOverride?: string) => void
   onContinueTutor: () => void
 }) {
   const messagesRef = useRef<HTMLDivElement | null>(null)
   const voiceRecognitionRef = useRef<any | null>(null)
   const [voiceStatus, setVoiceStatus] = useState<'idle' | 'listening' | 'unsupported'>('idle')
+  const defaultPrompt = `我想学习 ${targetConcept}`
 
   useEffect(() => {
     messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' })
@@ -1683,6 +2334,19 @@ function ChatCommand({
       voiceRecognitionRef.current = null
     }
   }, [])
+
+  const handleInputFocus = () => {
+    if (input.trim() === defaultPrompt) setInput('')
+  }
+
+  const handleInputBlur = () => {
+    if (!input.trim()) setInput(defaultPrompt)
+  }
+
+  const handleSend = () => {
+    if (loading) return
+    onSend(input.trim() || defaultPrompt)
+  }
 
   const toggleVoiceInput = () => {
     if (voiceStatus === 'listening' && voiceRecognitionRef.current) {
@@ -1714,7 +2378,8 @@ function ChatCommand({
     recognition.onresult = (event: any) => {
       const transcript = String(event.results?.[0]?.[0]?.transcript || '').trim()
       if (transcript) {
-        setInput(input.trim() ? `${input.trim()} ${transcript}` : transcript)
+        const current = input.trim() === defaultPrompt ? '' : input.trim()
+        setInput(current ? `${current} ${transcript}` : transcript)
       }
     }
     voiceRecognitionRef.current = recognition
@@ -1791,11 +2456,13 @@ function ChatCommand({
           <div className="chat-input-frame">
             <input
               value={input}
+              onFocus={handleInputFocus}
+              onBlur={handleInputBlur}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.nativeEvent.isComposing) onSend()
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing) handleSend()
               }}
-              className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-100 outline-none placeholder:text-slate-600"
+              className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-900 outline-none placeholder:text-slate-400"
               placeholder="输入你的问题，例如：为什么 open 要写 encoding？"
             />
             <button
@@ -1807,7 +2474,7 @@ function ChatCommand({
             >
               <Mic className="h-4 w-4" />
             </button>
-            <button type="button" onClick={() => onSend()} disabled={loading || !input.trim()} className="send-button">
+            <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={handleSend} disabled={loading} className="send-button">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 fill-current" />}
             </button>
           </div>

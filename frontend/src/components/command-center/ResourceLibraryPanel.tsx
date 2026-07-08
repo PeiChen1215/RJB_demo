@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { BookOpen, Loader2, Play, RefreshCw, Route, Send, Sparkles } from 'lucide-react'
-import type { ResourceDetail, ResourceVersion, ThinkingStep } from '@/services/api'
+import type {
+  ResourceDetail,
+  ResourceEvolutionResponse,
+  ResourceFeedbackStats,
+  ResourceVersion,
+  ThinkingStep,
+} from '@/services/api'
 import { Panel, PanelHeader } from './Panel'
 import { cn } from '@/lib/utils'
 import { FurnaceTimeline } from '@/components/resources/FurnaceTimeline'
@@ -190,6 +196,8 @@ export function ResourceLibraryPanel({
   resourceStatus,
   loading,
   versions,
+  evolution,
+  feedbackStats,
   thinkingSteps,
   onGenerateResource,
   onRefresh,
@@ -205,6 +213,8 @@ export function ResourceLibraryPanel({
   resourceStatus: string
   loading: boolean
   versions: ResourceVersion[]
+  evolution?: ResourceEvolutionResponse | null
+  feedbackStats?: ResourceFeedbackStats | null
   thinkingSteps: ThinkingStep[]
   onGenerateResource: () => void
   onRefresh: () => void
@@ -228,6 +238,8 @@ export function ResourceLibraryPanel({
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false)
   const [feedbackMessage, setFeedbackMessage] = useState('')
   const latestVersion = versions[0]
+  const latestEvolution = evolution?.versions?.[0]
+  const errorRate = evolution?.error_stats?.error_rate
   const snapshot = latestVersion?.content_snapshot || {}
   const activeResource: ResourceDetail | null = resource || (Object.keys(snapshot).length ? {
     concept: selectedConcept,
@@ -571,9 +583,43 @@ export function ResourceLibraryPanel({
 
         <FurnaceTimeline concept={selectedConcept} />
 
+        <div>
+          <p className="resource-inspector-title">版本演进</p>
+          {latestVersion || latestEvolution ? (
+            <div className="version-card">
+              <strong>v{latestEvolution?.version ?? latestVersion?.version}</strong>
+              <span>{latestEvolution?.change_reason || latestVersion?.change_reason || '资源已生成并写入版本记录。'}</span>
+              <em>{latestEvolution?.triggered_by || latestVersion?.triggered_by || 'Agent pipeline'}</em>
+              {latestEvolution?.diff && (
+                <div className="version-diff-list">
+                  <small>{latestEvolution.diff.document_changed ? '讲义已更新' : '讲义无变化'}</small>
+                  <small>练习 {latestEvolution.diff.exercises_diff && latestEvolution.diff.exercises_diff > 0 ? '+' : ''}{latestEvolution.diff.exercises_diff ?? 0}</small>
+                  <small>案例 {latestEvolution.diff.code_cases_diff && latestEvolution.diff.code_cases_diff > 0 ? '+' : ''}{latestEvolution.diff.code_cases_diff ?? 0}</small>
+                </div>
+              )}
+              {typeof errorRate === 'number' && (
+                <span>代码提交错误率：{Math.round(errorRate * 100)}%</span>
+              )}
+            </div>
+          ) : (
+            <div className="version-card muted">
+              <strong>待生成</strong>
+              <span>点击“重新生成”后，这里会显示最新资源版本。</span>
+              <em>resources/versions</em>
+            </div>
+          )}
+        </div>
+
         {hasResource && (
           <div className="resource-feedback">
             <p className="resource-inspector-title">资源反馈</p>
+            {feedbackStats && (
+              <div className="resource-feedback-stats">
+                <span>反馈 {feedbackStats.total_feedback} 条</span>
+                <span>困惑率 {Math.round((feedbackStats.confusion_rate || 0) * 100)}%</span>
+                <span>均分 {feedbackStats.average_rating == null ? '--' : feedbackStats.average_rating.toFixed(1)}</span>
+              </div>
+            )}
             <div className="resource-feedback-stars">
               {[1, 2, 3, 4, 5].map((star) => (
                 <button

@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { Brain, ShieldCheck, Sparkles } from 'lucide-react'
-import { HexAvatar, Panel, PanelHeader } from './Panel'
 import { cn } from '@/lib/utils'
+import { HexAvatar, Panel, PanelHeader } from './Panel'
 
 const AGENTS = [
   { name: 'Profiler', job: '画像分析就绪', status: 'online', accent: 'mint', time: '00:12' },
@@ -14,7 +14,6 @@ const AGENTS = [
 
 function normalizeAgentName(name?: string): string {
   if (!name) return ''
-  // 将 Reviewer/Debate 等子阶段归一化为 Reviewer；Generator -> Builder
   const base = name.split('/')[0].trim()
   if (base === 'Generator') return 'Builder'
   return base
@@ -72,7 +71,7 @@ export function AgentPanel({
       <PanelHeader
         title="Agent 协作"
         icon={Sparkles}
-        meta={<span className="flex items-center gap-2 text-xs text-emerald-300"><span className="h-2 w-2 rounded-full bg-emerald-400" />{traces.length ? `${tracedAgentCount}/5 有调用记录` : '等待后端 trace'}</span>}
+        meta={<span className="flex items-center gap-2 text-xs text-emerald-700"><span className="h-2 w-2 rounded-full bg-emerald-500" />{traces.length ? `${tracedAgentCount}/5 有调用记录` : '等待后端 trace'}</span>}
       />
       <div className="agent-list">
         {AGENTS.map((agent, index) => {
@@ -88,6 +87,7 @@ export function AgentPanel({
                 ? `${agent.job} · 执行中`
                 : `${agent.job} · 完成`
             : `${agent.job} · 暂无记录`
+
           return (
             <motion.button
               type="button"
@@ -118,7 +118,11 @@ export function AgentPanel({
             const status = trace?.status === 'running' ? 'working' : trace?.status === 'failed' ? 'error' : trace ? 'online' : 'online'
             const tone = getAgentTone(status)
             return (
-              <span key={agent.name} className={cn(tone, status === 'working' && 'working', status === 'error' && 'error')} style={{ '--agent-index': index } as Record<string, number>} />
+              <span
+                key={agent.name}
+                className={cn(tone, status === 'working' && 'working', status === 'error' && 'error')}
+                style={{ '--agent-index': index } as Record<string, number>}
+              />
             )
           })}
           <strong>协作中枢</strong>

@@ -23,6 +23,44 @@ const api = axios.create({
   },
 })
 
+api.interceptors.request.use((config) => {
+  const token = typeof window === 'undefined' ? '' : window.localStorage.getItem('eduhive.auth_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+export interface AuthTokenResponse {
+  access_token: string
+  token_type: string
+  username: string
+}
+
+export interface LearningPlanItem {
+  concept: string
+  difficulty: number
+  mastery_probability: number
+  is_mastered: boolean
+  estimated_minutes: number
+  reason: string
+}
+
+export interface LearningPlanResponse {
+  session_id: string
+  target_concept: string
+  mastered_concepts: string[]
+  total_minutes: number
+  plan: LearningPlanItem[]
+}
+
+export interface LearningEvent {
+  id: number
+  session_id: string
+  event_type: string
+  concept?: string
+  payload?: Record<string, any>
+  created_at?: string
+}
+
 export interface SessionResponse {
   session_id: string
   profile: {
@@ -138,11 +176,33 @@ export const sessionApi = {
   getStats: (sessionId: string) =>
     api.get(`/sessions/${sessionId}/stats`),
 
+  getLearningPlan: (sessionId: string) =>
+    api.get<LearningPlanResponse>(`/learning-plan/${sessionId}`),
+
+  getEvents: (sessionId: string, limit: number = 8) =>
+    api.get<{ events: LearningEvent[]; total: number }>(`/sessions/${sessionId}/events?limit=${limit}`),
+
   chat: (sessionId: string, data: ChatRequest) =>
     api.post<AgentResponse>(`/sessions/${sessionId}/chat`, data),
 
   chatStream: (sessionId: string, message: string, messageType: string = 'text') =>
     fetch(`/api/sessions/${sessionId}/chat-stream?message=${encodeURIComponent(message)}&message_type=${messageType}`),
+}
+
+export const authApi = {
+  login: (username: string, password: string) => {
+    const form = new URLSearchParams()
+    form.set('username', username)
+    form.set('password', password)
+    return api.post<AuthTokenResponse>('/auth/login', form, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    })
+  },
+
+  register: (username: string, password: string) =>
+    api.post<AuthTokenResponse>('/auth/register', { username, password }),
+
+  logout: () => api.post('/auth/logout'),
 }
 
 // 知识图谱相关接口：全图、布局、个人路径、概念详情
@@ -195,6 +255,41 @@ export interface ResourceVersion {
   created_at: string
 }
 
+export interface ResourceEvolutionVersion {
+  version?: number
+  resource_id?: string
+  created_at?: string
+  triggered_by?: string
+  change_reason?: string
+  exercises_count?: number
+  code_cases_count?: number
+  diff?: {
+    document_changed?: boolean
+    exercises_diff?: number
+    code_cases_diff?: number
+  }
+}
+
+export interface ResourceEvolutionResponse {
+  concept: string
+  error_stats?: {
+    total_submissions?: number
+    passed?: number
+    failed?: number
+    error_rate?: number
+  }
+  versions: ResourceEvolutionVersion[]
+}
+
+export interface ResourceFeedbackStats {
+  concept: string
+  total_feedback: number
+  confusion_count: number
+  confusion_rate: number
+  average_rating: number | null
+  error_reports: string[]
+}
+
 export interface ResourceDetail {
   resource_id?: string
   task_id?: string
@@ -243,7 +338,7 @@ export const resourceApi = {
     api.get<{ concept: string; versions: ResourceVersion[] }>(`/resources/versions?concept=${encodeURIComponent(concept)}`),
 
   getEvolution: (concept: string) =>
-    api.get<{ concept: string; error_stats: any; versions: any[] }>(
+    api.get<ResourceEvolutionResponse>(
       `/resources/evolution?concept=${encodeURIComponent(concept)}`
     ),
 
@@ -254,6 +349,9 @@ export const resourceApi = {
 
   getThinkingPath: (concept: string) =>
     api.get<{ concept: string; steps: ThinkingStep[] }>(`/resources/thinking-path?concept=${encodeURIComponent(concept)}`),
+
+  getFeedbackStats: (concept: string) =>
+    api.get<ResourceFeedbackStats>(`/resources/feedback/stats?concept=${encodeURIComponent(concept)}`),
 
   seedFailedSubmissions: (sessionId: string, concept: string, count: number = 5) =>
     api.post('/code/seed-failed-submissions', { session_id: sessionId, concept, count }),
