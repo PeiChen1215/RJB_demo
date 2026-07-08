@@ -113,6 +113,9 @@ export const sessionApi = {
   create: (target_concept?: string) =>
     api.post<SessionResponse>('/sessions/', { target_concept }),
 
+  getSession: (sessionId: string) =>
+    api.get<SessionResponse>(`/sessions/${sessionId}`),
+
   getProfile: (sessionId: string) =>
     api.get(`/sessions/${sessionId}/profile`),
 
