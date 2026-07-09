@@ -680,7 +680,8 @@ function App() {
       const courseMatch = hash.match(/^#\/course\/([^/]+)(?:\/([^?]+))?/)
       if (courseMatch) {
         const courseId = courseMatch[1]
-        const navKey = courseMatch[2] as NavKey | undefined
+        let navKey = courseMatch[2] as NavKey | undefined
+        if ((navKey as string) === 'portrait') navKey = 'profile'
         setSelectedCourseId(courseId)
         setCourseMode(courseId === 'python' ? 'python' : 'empty')
         if (navKey && NAV_ITEMS.some((item) => item.key === navKey)) setActiveNav(navKey)
@@ -822,14 +823,12 @@ function App() {
         if (cancelled) return
         const nextTarget = sessionRes.data.target_concept || targetConcept
         const validTargets = new Set(graphRes.data.nodes.map((n) => n.name))
-        const targetNode = graphRes.data.nodes.find((n) => n.name === nextTarget)
-        const isBeginnerTarget = targetNode && ((targetNode.module && targetNode.module.includes('基础')) || targetNode.difficulty <= 2)
         const fallbackTarget = (() => {
-          const basics = graphRes.data.nodes.filter((n) => (n.module && n.module.includes('基础')) || n.difficulty <= 2)
-          const sorted = basics.length ? basics.sort((a, b) => a.difficulty - b.difficulty) : graphRes.data.nodes.sort((a, b) => a.difficulty - b.difficulty)
+          const basics = graphRes.data.nodes.filter((n) => (n.module && n.module.includes('基础')) || (typeof n.difficulty === 'number' && n.difficulty <= 2))
+          const sorted = basics.length ? [...basics].sort((a, b) => (a.difficulty ?? 99) - (b.difficulty ?? 99)) : [...graphRes.data.nodes].sort((a, b) => (a.difficulty ?? 99) - (b.difficulty ?? 99))
           return sorted[0]?.name || nextTarget
         })()
-        const finalTarget = validTargets.has(nextTarget) && isBeginnerTarget ? nextTarget : fallbackTarget
+        const finalTarget = validTargets.has(nextTarget) ? nextTarget : fallbackTarget
         window.localStorage.setItem('eduhive.target_concept', finalTarget)
         setTargetConcept(finalTarget)
         setSelectedConcept(finalTarget)

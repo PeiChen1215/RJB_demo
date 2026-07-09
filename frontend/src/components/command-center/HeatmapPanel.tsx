@@ -33,18 +33,20 @@ export function HeatmapPanel({
   onAnalyze: () => void
 }) {
   const cells = useMemo(() => {
-    return items.map((item) => {
-      const value = Math.round(item.mastery_probability * 100)
-      const band = value >= 78 ? '已掌握' : value >= 62 ? '需巩固' : value >= 45 ? '薄弱' : '待学习'
-      return {
-        row: band,
-        column: '真实知识点',
-        concept: item.concept,
-        value,
-        observations: item.observation_count ?? 0,
-        mastered: item.is_mastered || value >= 78,
-      }
-    })
+    return items
+      .map((item) => {
+        const value = Math.round(item.mastery_probability * 100)
+        const band = value >= 78 ? '已掌握' : value >= 62 ? '需巩固' : value >= 45 ? '薄弱' : '待学习'
+        return {
+          row: band,
+          column: '真实知识点',
+          concept: item.concept,
+          value,
+          observations: item.observation_count ?? 0,
+          mastered: item.is_mastered || value >= 78,
+        }
+      })
+      .sort((a, b) => b.value - a.value)
   }, [items])
   const summary = useMemo(() => {
     const average = items.length
