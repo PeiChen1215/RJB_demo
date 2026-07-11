@@ -1,39 +1,40 @@
 /**
  * 需求：认知风格差异化渲染组件（C5）。
  * 功能：
- *   - 根据视觉型 / 听觉型 / 动觉型三种认知风格切换资源呈现方式；
- *   - 视觉型：默认 Markdown + 导图；
- *   - 听觉型：突出音频文本、支持浏览器 TTS 朗读；
- *   - 动觉型：突出代码案例与练习，鼓励动手实践。
+ *   - 文字型：标准 Markdown 讲义 + 思维导图；
+ *   - 视觉型：嵌入讲解视频，适合通过观看学习的学生；
+ *   - 听觉型：浏览器 TTS 朗读 + 音频文本展示。
  *
  * TODO:
- * - [已完成] 风格切换器与三种渲染模式
+ * - [已完成] 三种认知风格切换与渲染
  * - [已完成] 浏览器 TTS 朗读支持
- * - [待完成] 与后端画像 cognitive_modality 自动联动
+ * - [已完成] 视觉型讲解视频播放
+ * - [待完成] 接入讯飞 TTS 替代浏览器 TTS
  */
 import { useEffect, useState } from 'react'
-import { Eye, Ear, Hand, Volume2, VolumeX } from 'lucide-react'
+import { Eye, Ear, FileText, Volume2, VolumeX, Play } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-export type CognitiveStyle = 'visual' | 'auditory' | 'kinesthetic'
+export type CognitiveStyle = 'readwrite' | 'visual' | 'auditory'
 
 interface Props {
   currentStyle?: CognitiveStyle
   onStyleChange?: (style: CognitiveStyle) => void
   audioText?: string
+  concept?: string
   children: React.ReactNode
 }
 
 const STYLES: { key: CognitiveStyle; label: string; icon: React.ElementType; desc: string }[] = [
-  { key: 'visual', label: '视觉型', icon: Eye, desc: '图文 + 导图' },
+  { key: 'readwrite', label: '文字型', icon: FileText, desc: '讲义 + 导图' },
+  { key: 'visual', label: '视觉型', icon: Eye, desc: '视频 + 图文' },
   { key: 'auditory', label: '听觉型', icon: Ear, desc: '朗读 + 讲解' },
-  { key: 'kinesthetic', label: '动觉型', icon: Hand, desc: '动手 + 代码' },
 ]
 
 export function CognitiveStyleToggle({
-  currentStyle = 'visual',
+  currentStyle = 'readwrite',
   onStyleChange,
 }: {
   currentStyle?: CognitiveStyle
@@ -65,15 +66,70 @@ export function CognitiveStyleToggle({
   )
 }
 
+// 知识点 → B站视频 BV号 映射
+const CONCEPT_VIDEO_MAP: Record<string, { bvid: string; title: string }> = {
+  '变量与赋值': { bvid: 'BV17F4m1F77E', title: '变量和赋值详解' },
+  '基本数据类型': { bvid: 'BV1hnwaeiE5D', title: '变量与数据类型' },
+  '条件判断': { bvid: 'BV17341197Wp', title: 'if 多条件判断' },
+  '循环结构': { bvid: 'BV17341197Wp', title: 'while / for 循环' },
+  'Python简介': { bvid: 'BV1kW411M77N', title: 'Python语言程序设计（嵩天）' },
+}
+const DEFAULT_VIDEO = { bvid: 'BV1kW411M77N', title: '北京理工大学 嵩天《Python语言程序设计》' }
+
+function VisualVideoPanel({ concept }: { concept?: string }) {
+  const [loadVideo, setLoadVideo] = useState(false)
+  const video = (concept && CONCEPT_VIDEO_MAP[concept]) || DEFAULT_VIDEO
+
+  useEffect(() => {
+    // 延迟加载 B站播放器，避免首屏卡顿
+    const timer = setTimeout(() => setLoadVideo(true), 300)
+    return () => clearTimeout(timer)
+  }, [concept])
+
+  return (
+    <div className="mb-4 overflow-hidden rounded-xl border border-blue-100 bg-white/80 shadow-sm backdrop-blur-sm">
+      <div className="flex items-center gap-2 border-b border-blue-50 px-4 py-3">
+        <Play className="h-4 w-4 text-blue-600" />
+        <span className="text-sm font-bold text-slate-800">
+          {concept ? `「${concept}」讲解视频` : '知识点讲解视频'}
+        </span>
+        <span className="ml-auto text-[11px] text-slate-400">视觉型 · B站</span>
+      </div>
+      <div className="aspect-video bg-black flex items-center justify-center">
+        {loadVideo ? (
+          <iframe
+            src={`//player.bilibili.com/player.html?bvid=${video.bvid}&page=1&high_quality=1&autoplay=0`}
+            scrolling="no"
+            frameBorder="no"
+            allowFullScreen
+            className="h-full w-full"
+          />
+        ) : (
+          <button
+            onClick={() => setLoadVideo(true)}
+            className="flex flex-col items-center gap-2 text-white/60 hover:text-white transition"
+          >
+            <Play className="h-12 w-12 rounded-full bg-white/10 p-2" />
+            <span className="text-xs">{video.title}</span>
+          </button>
+        )}
+      </div>
+      <div className="px-4 py-2 text-[11px] text-slate-500 bg-blue-50/50">
+        {video.title}
+      </div>
+    </div>
+  )
+}
+
 export function CognitiveStylePanel({
-  currentStyle = 'visual',
+  currentStyle = 'readwrite',
   onStyleChange,
   audioText,
+  concept,
   children,
 }: Props) {
   const [speaking, setSpeaking] = useState(false)
 
-  // 组件卸载时停止 TTS
   useEffect(() => {
     const synth = window.speechSynthesis
     return () => {
@@ -93,6 +149,7 @@ export function CognitiveStylePanel({
     if (!text) return
     const utter = new SpeechSynthesisUtterance(text)
     utter.lang = 'zh-CN'
+    utter.rate = 0.9
     utter.onend = () => setSpeaking(false)
     synth.speak(utter)
     setSpeaking(true)
@@ -102,8 +159,8 @@ export function CognitiveStylePanel({
     <div
       className={cn(
         'relative rounded-2xl transition-colors',
-        currentStyle === 'auditory' && 'border border-amber-100 bg-amber-50/30',
-        currentStyle === 'kinesthetic' && 'border border-emerald-100 bg-emerald-50/30'
+        currentStyle === 'visual' && 'border border-blue-100 bg-blue-50/20',
+        currentStyle === 'auditory' && 'border border-amber-100 bg-amber-50/30'
       )}
     >
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -121,16 +178,20 @@ export function CognitiveStylePanel({
         )}
       </div>
 
+      {currentStyle === 'visual' && (
+        <VisualVideoPanel concept={concept} />
+      )}
+
       {currentStyle === 'auditory' && audioText && (
         <div className="mb-4 rounded-xl border border-amber-100 bg-white/70 p-4 text-sm leading-relaxed text-slate-700 backdrop-blur-sm">
-          <span className="mb-1 block text-xs font-bold text-amber-700">音频版讲解</span>
+          <span className="mb-1 block text-xs font-bold text-amber-700">音频版讲解稿</span>
           {audioText}
         </div>
       )}
 
-      {currentStyle === 'kinesthetic' && (
-        <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50/70 p-3 text-xs font-semibold text-emerald-800">
-          💡 动觉学习模式：建议先阅读代码案例，然后自己动手修改并运行，最后再回看讲解。
+      {currentStyle === 'readwrite' && (
+        <div className="mb-3 rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2 text-[11px] font-medium text-slate-500">
+          📖 文字型学习模式：适合通过阅读和笔记学习，下方为完整讲义内容。
         </div>
       )}
 

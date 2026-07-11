@@ -227,8 +227,8 @@ class GeneratorAgent(BaseAgent):
 
     def _normalize_exercises(self, exercises: List[Dict[str, Any]], concept: str) -> List[Dict[str, Any]]:
         """补齐练习题字段，缺失 expected_output 时尝试执行 solution 推导。"""
+        import subprocess, tempfile, os as _os
         normalized = []
-        # mock 模式下不逐题执行 solution，避免多次子进程调用拖慢生成
         executor = None if self._is_mock else CodeExecutor(timeout=5.0)
         for ex in exercises:
             question = ex.get("question") or f"练习：{concept}"
@@ -236,9 +236,21 @@ class GeneratorAgent(BaseAgent):
             solution = ex.get("solution") or ""
             hints = ex.get("hints") or []
             expected = (ex.get("expected_output") or "").strip()
-            if not expected and executor:
-                code_to_run = solution.strip() or starter.strip()
-                if code_to_run:
+            code_to_run = (solution or starter).strip()
+            if not expected and code_to_run:
+                # mock 模式用临时文件 + 子进程推导期望输出
+                if self._is_mock:
+                    try:
+                        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8')
+                        tmp.write(code_to_run)
+                        tmp.close()
+                        result = subprocess.run([_os.environ.get('PYTHON_EXE', 'python'), tmp.name],
+                            capture_output=True, text=True, timeout=5)
+                        _os.unlink(tmp.name)
+                        expected = (result.stdout or result.stderr or "").strip()
+                    except Exception:
+                        expected = ""
+                elif executor:
                     try:
                         result = executor.execute(code_to_run)
                         if result.get("success") and result.get("stdout") is not None:

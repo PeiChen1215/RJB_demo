@@ -11,6 +11,8 @@ import type {
 import { Panel, PanelHeader } from './Panel'
 import { cn } from '@/lib/utils'
 import { FurnaceTimeline } from '@/components/resources/FurnaceTimeline'
+import { CognitiveStylePanel, type CognitiveStyle } from '@/components/resources/CognitiveStyleRenderer'
+import { AUDIO_SCRIPTS } from '@/components/resources/cognitiveStyleData'
 import type { CodeRunResult, ExerciseView } from './types'
 
 function textFrom(value: unknown) {
@@ -207,6 +209,8 @@ export function ResourceLibraryPanel({
   onJudgeExercise,
   onSectionView,
   onSubmitFeedback,
+  styleMode,
+  onStyleChange,
 }: {
   selectedConcept: string
   resource: ResourceDetail | null
@@ -216,6 +220,8 @@ export function ResourceLibraryPanel({
   evolution?: ResourceEvolutionResponse | null
   feedbackStats?: ResourceFeedbackStats | null
   thinkingSteps: ThinkingStep[]
+  styleMode: CognitiveStyle
+  onStyleChange: (mode: CognitiveStyle) => void
   onGenerateResource: () => void
   onRefresh: () => void
   onPlanPath: () => void
@@ -424,7 +430,14 @@ export function ResourceLibraryPanel({
 
         {!loading && hasResource && activeSection === 'document' && (
           <div className="resource-document">
-            <RichLearningText title="智能讲义" content={activeResource?.document || '后端未返回讲义内容。'} />
+            <CognitiveStylePanel
+              currentStyle={styleMode}
+              onStyleChange={onStyleChange}
+              audioText={AUDIO_SCRIPTS[selectedConcept] || activeResource?.audio_text || activeResource?.document || ''}
+              concept={selectedConcept}
+            >
+              <RichLearningText title="智能讲义" content={activeResource?.document || '后端未返回讲义内容。'} />
+            </CognitiveStylePanel>
           </div>
         )}
 

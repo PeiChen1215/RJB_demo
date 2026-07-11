@@ -515,7 +515,7 @@ function tryParseJsonString(value: unknown): unknown {
   }
 }
 
-function extractAgentText(response?: AgentResponse | null, preferredModality?: 'visual' | 'auditory' | 'kinesthetic') {
+function extractAgentText(response?: AgentResponse | null, preferredModality?: 'readwrite' | 'visual' | 'auditory') {
   const rawContent = response?.content
   if (!rawContent) return ''
   const content = typeof rawContent === 'string' ? tryParseJsonString(rawContent) : rawContent
@@ -528,7 +528,7 @@ function extractAgentText(response?: AgentResponse | null, preferredModality?: '
       ? `已掌握：${profile.mastered_concepts.join('、')}`
       : ''
     const modalityValue = preferredModality || profile.cognitive_modality
-    const modality = modalityValue === 'auditory' ? '听觉型' : modalityValue === 'kinesthetic' ? '动觉型' : modalityValue === 'visual' ? '视觉型' : ''
+    const modality = modalityValue === 'auditory' ? '听觉型' : modalityValue === 'visual' ? '视觉型' : modalityValue === 'readwrite' ? '文字型' : ''
     const profileLine = [
       modality && `认知风格：${modality}`,
       profile.learning_pace && `节奏：${profile.learning_pace}`,
@@ -622,7 +622,7 @@ function App() {
   const [resourcePackage, setResourcePackage] = useState<ResourceDetail | null>(null)
   const [resourcePanelLoading, setResourcePanelLoading] = useState(false)
   const [conceptDetail, setConceptDetail] = useState<any | null>(null)
-  const [styleMode, setStyleMode] = useState<'visual' | 'auditory' | 'kinesthetic'>('visual')
+  const [styleMode, setStyleMode] = useState<'readwrite' | 'visual' | 'auditory'>('readwrite')
   const [chatInput, setChatInput] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     createChatMessage('assistant', `你已经掌握了前置知识，接下来我们学习「${targetConcept}」。你可以直接提问，我会结合学习画像、知识图谱和练习记录进行辅导。`, 'Socrates'),
@@ -836,8 +836,8 @@ function App() {
         setResourceConcept(finalTarget)
         if (sessionRes.data.suggested_path?.length) setPlannedPath(sessionRes.data.suggested_path)
         setSession(sessionRes.data)
-        if (['visual', 'auditory', 'kinesthetic'].includes(sessionRes.data.profile.cognitive_modality)) {
-          setStyleMode(sessionRes.data.profile.cognitive_modality as 'visual' | 'auditory' | 'kinesthetic')
+        if (['readwrite', 'visual', 'auditory'].includes(sessionRes.data.profile.cognitive_modality)) {
+          setStyleMode(sessionRes.data.profile.cognitive_modality as 'readwrite' | 'visual' | 'auditory')
         }
         setGraph(graphRes.data)
         if (layoutRes?.data) setGraphLayout(layoutRes.data)
@@ -1387,7 +1387,7 @@ function App() {
     }
   }
 
-  const changeStyleMode = async (mode: 'visual' | 'auditory' | 'kinesthetic') => {
+  const changeStyleMode = async (mode: 'readwrite' | 'visual' | 'auditory') => {
     setStyleMode(mode)
     setSession((current) => current ? {
       ...current,
@@ -1570,6 +1570,8 @@ function App() {
                   evolution={resourceEvolution}
                   feedbackStats={feedbackStats}
                   thinkingSteps={thinkingSteps}
+                  styleMode={styleMode}
+                  onStyleChange={changeStyleMode}
                   onGenerateResource={() => generateResource(resourceConcept, 'resource')}
                   onRefresh={() => loadResource(resourceConcept, 'refresh')}
                   onPlanPath={planPath}

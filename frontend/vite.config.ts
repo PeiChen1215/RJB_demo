@@ -14,11 +14,11 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: process.env.VITE_API_TARGET || 'http://localhost:8001',
+        target: process.env.VITE_API_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
       '/health': {
-        target: process.env.VITE_API_TARGET || 'http://localhost:8001',
+        target: process.env.VITE_API_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
     },
@@ -27,11 +27,11 @@ export default defineConfig({
     port: 4173,
     proxy: {
       '/api': {
-        target: process.env.VITE_API_TARGET || 'http://localhost:8001',
+        target: process.env.VITE_API_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
       '/health': {
-        target: process.env.VITE_API_TARGET || 'http://localhost:8001',
+        target: process.env.VITE_API_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
     },
