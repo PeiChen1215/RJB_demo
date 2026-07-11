@@ -53,7 +53,7 @@ export function ProfilePanel({
   const [evidence, setEvidence] = useState<Record<string, EvidenceItem[]>>({})
   const [evidenceOpen, setEvidenceOpen] = useState(false)
   const [confidence, setConfidence] = useState(0)
-  const modality = profile?.cognitive_modality === 'auditory' ? '听觉型' : profile?.cognitive_modality === 'kinesthetic' ? '动觉型' : '视觉型'
+  const modality = profile?.cognitive_modality === 'text' ? '文字型' : profile?.cognitive_modality === 'visual' ? '视觉型' : profile?.cognitive_modality === 'auditory' ? '听觉型' : profile?.cognitive_modality === 'kinesthetic' ? '动觉型' : '视觉型'
   const field = profile?.cognitive_field === 'independent' ? '场独立' : '场依存'
 
   useEffect(() => {

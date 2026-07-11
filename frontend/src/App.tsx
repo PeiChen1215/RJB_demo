@@ -515,7 +515,7 @@ function tryParseJsonString(value: unknown): unknown {
   }
 }
 
-function extractAgentText(response?: AgentResponse | null, preferredModality?: 'visual' | 'auditory' | 'kinesthetic') {
+function extractAgentText(response?: AgentResponse | null, preferredModality?: 'text' | 'visual' | 'auditory' | 'kinesthetic') {
   const rawContent = response?.content
   if (!rawContent) return ''
   const content = typeof rawContent === 'string' ? tryParseJsonString(rawContent) : rawContent
@@ -528,7 +528,8 @@ function extractAgentText(response?: AgentResponse | null, preferredModality?: '
       ? `已掌握：${profile.mastered_concepts.join('、')}`
       : ''
     const modalityValue = preferredModality || profile.cognitive_modality
-    const modality = modalityValue === 'auditory' ? '听觉型' : modalityValue === 'kinesthetic' ? '动觉型' : modalityValue === 'visual' ? '视觉型' : ''
+    const modalityLabel: Record<string, string> = { text: '文字型', visual: '视觉型', auditory: '听觉型', kinesthetic: '动觉型' }
+    const modality = modalityLabel[modalityValue] || ''
     const profileLine = [
       modality && `认知风格：${modality}`,
       profile.learning_pace && `节奏：${profile.learning_pace}`,
@@ -622,8 +623,8 @@ function App() {
   const [resourcePackage, setResourcePackage] = useState<ResourceDetail | null>(null)
   const [resourcePanelLoading, setResourcePanelLoading] = useState(false)
   const [conceptDetail, setConceptDetail] = useState<any | null>(null)
-  const [styleMode, setStyleMode] = useState<'visual' | 'auditory' | 'kinesthetic'>('visual')
-  const [chatInput, setChatInput] = useState('')
+  const [styleMode, setStyleMode] = useState<'text' | 'visual' | 'auditory' | 'kinesthetic'>('text')
+  const [chatInput, setChatInput] = useState(() => `我想学习 ${targetConcept}`)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     createChatMessage('assistant', `你已经掌握了前置知识，接下来我们学习「${targetConcept}」。你可以直接提问，我会结合学习画像、知识图谱和练习记录进行辅导。`, 'Socrates'),
   ])
@@ -680,8 +681,7 @@ function App() {
       const courseMatch = hash.match(/^#\/course\/([^/]+)(?:\/([^?]+))?/)
       if (courseMatch) {
         const courseId = courseMatch[1]
-        let navKey = courseMatch[2] as NavKey | undefined
-        if ((navKey as string) === 'portrait') navKey = 'profile'
+        const navKey = courseMatch[2] as NavKey | undefined
         setSelectedCourseId(courseId)
         setCourseMode(courseId === 'python' ? 'python' : 'empty')
         if (navKey && NAV_ITEMS.some((item) => item.key === navKey)) setActiveNav(navKey)
@@ -836,8 +836,8 @@ function App() {
         setResourceConcept(finalTarget)
         if (sessionRes.data.suggested_path?.length) setPlannedPath(sessionRes.data.suggested_path)
         setSession(sessionRes.data)
-        if (['visual', 'auditory', 'kinesthetic'].includes(sessionRes.data.profile.cognitive_modality)) {
-          setStyleMode(sessionRes.data.profile.cognitive_modality as 'visual' | 'auditory' | 'kinesthetic')
+        if (['text', 'visual', 'auditory', 'kinesthetic'].includes(sessionRes.data.profile.cognitive_modality)) {
+          setStyleMode(sessionRes.data.profile.cognitive_modality as 'text' | 'visual' | 'auditory' | 'kinesthetic')
         }
         setGraph(graphRes.data)
         if (layoutRes?.data) setGraphLayout(layoutRes.data)
@@ -1387,7 +1387,7 @@ function App() {
     }
   }
 
-  const changeStyleMode = async (mode: 'visual' | 'auditory' | 'kinesthetic') => {
+  const changeStyleMode = async (mode: 'text' | 'visual' | 'auditory' | 'kinesthetic') => {
     setStyleMode(mode)
     setSession((current) => current ? {
       ...current,
@@ -1396,7 +1396,8 @@ function App() {
         cognitive_modality: mode,
       },
     } : current)
-    setWorkspaceNote(`认知风格画像已切换为：${mode === 'visual' ? '视觉型' : mode === 'auditory' ? '听觉型' : '动觉型'}。`)
+    const modeLabel = mode === 'text' ? '文字型' : mode === 'visual' ? '视觉型' : mode === 'auditory' ? '听觉型' : '动觉型'
+    setWorkspaceNote(`认知风格画像已切换为：${modeLabel}。`)
     if (session) {
       sessionApi.updateProfile(session.session_id, { cognitive_modality: mode })
         .then((res) => {
@@ -1441,8 +1442,7 @@ function App() {
   }
 
   return (
-    <div className={cn('command-shell min-h-screen text-slate-100', `style-mode-${styleMode}`)}>
-      <HexBackdrop />
+    <div className={cn('command-shell min-h-screen', `style-mode-${styleMode}`)}>
       <aside className="command-sidebar">
         <BrandBlock />
         <button type="button" onClick={openPortal} className="course-back-link">
@@ -1514,48 +1514,36 @@ function App() {
 
             {activeNav === 'graph' && (
               <div className={cn('module-grid graph-page', showGraphDetail && 'graph-page-detailing')}>
-                {graphView === 'path' ? (
-                  <>
-                    <KnowledgePanel
-                      nodes={pathNodes}
-                      edges={graphEdges}
-                      plannedPath={plannedPath}
-                      selectedNodeId={selectedNodeId}
-                      selectedConcept={selectedConcept}
-                      graphConcepts={graphConcepts}
-                      averageMastery={averageMastery}
-                      resourceStatus={resourceStatus}
-                      conceptDetail={conceptDetail}
-                      showDetail={showGraphDetail}
-                      focusNonce={graphFocusNonce}
-                      onSwitchToStructure={() => setGraphView('structure')}
-                      onNodeSelect={selectNode}
-                      onCanvasBlankClick={() => setShowGraphDetail(false)}
-                      onPlanPath={planPath}
-                      onGenerateResource={(concept) => generateResource(concept, 'node')}
-                    />
-                    <WorkspaceDock
-                      activeNav={activeNav}
-                      selectedConcept={selectedConcept}
-                      styleMode={styleMode}
-                      workspaceNote={workspaceNote}
-                      thinkingSteps={thinkingSteps}
-                      versions={versions}
-                      learningPlan={learningPlan}
-                      learningEvents={learningEvents}
-                      onStyleChange={changeStyleMode}
-                      onAnalyze={analyzeMastery}
-                      onPlanPath={planPath}
-                    />
-                  </>
-                ) : (
-                  <div>
-                    <div className="flex items-center gap-2 px-1 pb-2">
-                      <button type="button" onClick={() => setGraphView('path')} className="rounded-full px-2.5 py-0.5 text-[11px] border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition">← 六边形路径</button>
-                    </div>
-                    <EChartsKnowledgeGraph />
-                  </div>
-                )}
+                <KnowledgePanel
+                  nodes={pathNodes}
+                  edges={graphEdges}
+                  plannedPath={plannedPath}
+                  selectedNodeId={selectedNodeId}
+                  selectedConcept={selectedConcept}
+                  graphConcepts={graphConcepts}
+                  averageMastery={averageMastery}
+                  resourceStatus={resourceStatus}
+                  conceptDetail={conceptDetail}
+                  showDetail={showGraphDetail}
+                  focusNonce={graphFocusNonce}
+                  onNodeSelect={selectNode}
+                  onCanvasBlankClick={() => setShowGraphDetail(false)}
+                  onPlanPath={planPath}
+                  onGenerateResource={(concept) => generateResource(concept, 'node')}
+                />
+                <WorkspaceDock
+                  activeNav={activeNav}
+                  selectedConcept={selectedConcept}
+                  styleMode={styleMode}
+                  workspaceNote={workspaceNote}
+                  thinkingSteps={thinkingSteps}
+                  versions={versions}
+                  learningPlan={learningPlan}
+                  learningEvents={learningEvents}
+                  onStyleChange={changeStyleMode}
+                  onAnalyze={analyzeMastery}
+                  onPlanPath={planPath}
+                />
               </div>
             )}
 
@@ -1570,6 +1558,8 @@ function App() {
                   evolution={resourceEvolution}
                   feedbackStats={feedbackStats}
                   thinkingSteps={thinkingSteps}
+                  styleMode={styleMode}
+                  onStyleChange={changeStyleMode}
                   onGenerateResource={() => generateResource(resourceConcept, 'resource')}
                   onRefresh={() => loadResource(resourceConcept, 'refresh')}
                   onPlanPath={planPath}
@@ -2012,16 +2002,6 @@ function CourseStudyHeader({
         ))}
       </nav>
       <span className="course-study-tip"><Star className="h-4 w-4" /> 当前正在学习「{selectedConcept}」，你可以在{activeItem.label}中继续推进。</span>
-    </div>
-  )
-}
-
-function HexBackdrop() {
-  return (
-    <div aria-hidden="true" className="pointer-events-none fixed inset-0 overflow-hidden">
-      <div className="command-bg-layer absolute inset-0" />
-      <div className="absolute inset-0 opacity-[0.10] [background-image:linear-gradient(30deg,rgba(255,190,82,.25)_12%,transparent_12.5%,transparent_87%,rgba(255,190,82,.25)_87.5%,rgba(255,190,82,.25)),linear-gradient(150deg,rgba(255,190,82,.25)_12%,transparent_12.5%,transparent_87%,rgba(255,190,82,.25)_87.5%,rgba(255,190,82,.25)),linear-gradient(30deg,rgba(255,190,82,.25)_12%,transparent_12.5%,transparent_87%,rgba(255,190,82,.25)_87.5%,rgba(255,190,82,.25)),linear-gradient(150deg,rgba(255,190,82,.25)_12%,transparent_12.5%,transparent_87%,rgba(255,190,82,.25)_87.5%,rgba(255,190,82,.25))] [background-position:0_0,0_0,18px_31px,18px_31px] [background-size:36px_62px]" />
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.035)_1px,transparent_1px)] bg-[size:40px_40px]" />
     </div>
   )
 }
