@@ -38,6 +38,7 @@ class BehaviorEventType(str, Enum):
     EXERCISE_SUBMITTED = "exercise_submitted"
     CODE_EXECUTED = "code_executed"
     MINDMAP_CLICKED = "mindmap_clicked"           # 点击导图节点
+    GRAPH_NODE_SELECTED = "graph_node_selected"   # 点击知识图谱节点
     HINT_EXPANDED = "hint_expanded"               # 展开提示
     RESOURCE_SWITCHED = "resource_switched"       # 切换资源类型
     PAGE_STAY = "page_stay"                       # 页面停留
@@ -47,7 +48,9 @@ class BehaviorEventType(str, Enum):
     EXERCISE_ATTEMPT = "exercise_attempt"          # 尝试答题
     CODE_CASE_VIEWED = "code_case_viewed"          # 查看代码案例
     AUDIO_PLAYED = "audio_played"                  # 播放音频
-    HELP_REQUESTED = "help_requested"              # 请求帮助
+    HELP_REQUESTED = "help_requested"
+    HEATMAP_CELL_SELECTED = "heatmap_cell_selected"  # 点击掌握进度热力图单元
+    COMMAND_CENTER_OPENED = "command_center_opened"  # 打开指挥舱              # 请求帮助
 
 
 # ═══════════════════════════════════════════════════════════════

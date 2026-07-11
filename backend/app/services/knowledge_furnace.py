@@ -17,7 +17,7 @@ TODO:
 - [已完成] 调用 Orchestrator 重新生成资源并保存版本演进
 - [已完成] 与代码判题接口联动，后台触发
 - [已完成] 接入资源反馈（confusion_marked、rating）作为辅助触发信号
-- [待完成] 增加重审任务队列，避免多个提交同时触发多次重审
+- [已完成] 增加重审去重锁，避免同一知识点并发触发多次重审
 """
 import os
 import uuid
@@ -40,6 +40,9 @@ MIN_SUBMISSIONS = int(os.environ.get("FURNACE_MIN_SUBMISSIONS", "5"))
 CONFUSION_RATE_THRESHOLD = float(os.environ.get("FURNACE_CONFUSION_RATE_THRESHOLD", "0.5"))
 LOW_RATING_THRESHOLD = float(os.environ.get("FURNACE_LOW_RATING_THRESHOLD", "2.5"))
 MIN_FEEDBACK_COUNT = int(os.environ.get("FURNACE_MIN_FEEDBACK_COUNT", "3"))
+
+# 重审去重锁：同一知识点正在重审时跳过重复触发
+_review_locks: set = set()
 
 
 def should_trigger_resource_review(concept: str) -> Tuple[bool, Dict[str, Any]]:
@@ -90,31 +93,38 @@ def trigger_resource_review(
 
     返回 None 表示未满足触发条件（force=True 时不做阈值判断）；
     否则返回重审任务元信息。
+
+    去重锁：同一知识点正在重审时，跳过重复触发（避免并发导致多次重审）。
     """
+    global _review_locks
+    if concept in _review_locks:
+        return None
+    _review_locks.add(concept)
+
     stats = {"total_submissions": 0, "error_rate": 0.0}
-    if not force:
-        should, stats = should_trigger_resource_review(concept)
-        if not should:
-            return None
-
-    latest = find_latest_resource_by_concept(concept)
-    if not latest:
-        next_version = 1
-        resource_id = str(uuid.uuid4())
-    else:
-        resource_id = latest["resource_id"]
-        next_version = latest.get("version", 1) + 1
-
-    task_id = str(uuid.uuid4())
-    create_generation_task(
-        task_id=task_id,
-        session_id="system",
-        concept=concept,
-        status="pending",
-        stage_message="知识熔炉：错误率过高，触发资源重审",
-    )
-
     try:
+        if not force:
+            should, stats = should_trigger_resource_review(concept)
+            if not should:
+                return None
+
+        latest = find_latest_resource_by_concept(concept)
+        if not latest:
+            next_version = 1
+            resource_id = str(uuid.uuid4())
+        else:
+            resource_id = latest["resource_id"]
+            next_version = latest.get("version", 1) + 1
+
+        task_id = str(uuid.uuid4())
+        create_generation_task(
+            task_id=task_id,
+            session_id="system",
+            concept=concept,
+            status="pending",
+            stage_message="知识熔炉：错误率过高，触发资源重审",
+        )
+
         session = {
             "session_id": "system",
             "user_id": "system",
@@ -189,3 +199,5 @@ def trigger_resource_review(
             "triggered_by": triggered_by,
             "error": str(e),
         }
+    finally:
+        _review_locks.discard(concept)

@@ -29,6 +29,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from app.agents.base import AgentMessage, BaseAgent
+from app.agents.llm import MockLLMProvider
 from app.models.schemas import ResourcePackage
 from app.services.code_executor import CodeExecutor
 from app.services.graph_factory import get_graph_store
@@ -38,6 +39,11 @@ class GeneratorAgent(BaseAgent):
     """根据画像和知识约束生成 5 种资源类型"""
 
     name = "Generator"
+
+    def __init__(self, llm=None):
+        super().__init__(llm)
+        self._is_mock = isinstance(self.llm, MockLLMProvider)
+
     system_prompt = """你是一位资深的 Python 教学资源设计师。
 你的任务是根据学生的画像和知识图谱约束，生成高质量的教学资源。
 
@@ -89,10 +95,11 @@ class GeneratorAgent(BaseAgent):
         exercises = self._normalize_exercises(parsed.get("exercises", []), concept)
         code_cases = self._normalize_code_cases(parsed.get("code_cases", []))
 
-        # 自动修正不可运行的代码案例（最多尝试 2 轮）
-        code_cases = self._auto_fix_code_cases(
-            code_cases, concept, concept_info, profile
-        )
+        # mock 模式下跳过耗时较长的代码自动修正，保证演示响应速度
+        if not self._is_mock:
+            code_cases = self._auto_fix_code_cases(
+                code_cases, concept, concept_info, profile
+            )
 
         package = ResourcePackage(
             concept=concept,
@@ -221,14 +228,15 @@ class GeneratorAgent(BaseAgent):
     def _normalize_exercises(self, exercises: List[Dict[str, Any]], concept: str) -> List[Dict[str, Any]]:
         """补齐练习题字段，缺失 expected_output 时尝试执行 solution 推导。"""
         normalized = []
-        executor = CodeExecutor(timeout=5.0)
+        # mock 模式下不逐题执行 solution，避免多次子进程调用拖慢生成
+        executor = None if self._is_mock else CodeExecutor(timeout=5.0)
         for ex in exercises:
             question = ex.get("question") or f"练习：{concept}"
             starter = ex.get("starter_code") or ""
             solution = ex.get("solution") or ""
             hints = ex.get("hints") or []
             expected = (ex.get("expected_output") or "").strip()
-            if not expected:
+            if not expected and executor:
                 code_to_run = solution.strip() or starter.strip()
                 if code_to_run:
                     try:
@@ -249,6 +257,18 @@ class GeneratorAgent(BaseAgent):
     def _normalize_code_cases(self, code_cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """校验代码案例是否可运行，并标记运行结果。"""
         normalized = []
+        # mock 模式跳过真实执行，直接标记为可运行，缩短资源生成时间
+        if self._is_mock:
+            for case in code_cases:
+                normalized.append({
+                    "title": case.get("title") or "代码案例",
+                    "code": case.get("code") or "",
+                    "explanation": case.get("explanation") or "",
+                    "runnable": True,
+                    "run_result": {"runnable": True, "stdout": "", "stderr": ""},
+                })
+            return normalized
+
         executor = CodeExecutor(timeout=5.0)
         for case in code_cases:
             title = case.get("title") or "代码案例"

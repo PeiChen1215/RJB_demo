@@ -10,6 +10,7 @@ import type {
 } from '@/services/api'
 import { Panel, PanelHeader } from './Panel'
 import { cn } from '@/lib/utils'
+import { FurnaceTimeline } from '@/components/resources/FurnaceTimeline'
 import type { CodeRunResult, ExerciseView } from './types'
 import { BilibiliVideoPlayer, TTSReader } from '@/components/resources/CognitiveStyleRenderer'
 import type { CognitiveStyle } from '@/components/resources/CognitiveStyleRenderer'
@@ -283,6 +284,7 @@ export function ResourceLibraryPanel({
     ['代码案例', '可发送到代码沙箱继续运行和调试。', 'code', codeCases.length > 0],
     ['听觉讲解', '读取后端生成的 audio_text 讲解稿。', 'audio', Boolean(activeResource?.audio_text)],
     ['审核报告', '展示 Reviewer 辩论审核结论和修改理由。', 'review', Boolean(activeResource?.debate_report)],
+    ['版本演进', '知识熔炉驱动的资源版本历史。', 'versions', true],
   ] as const
 
   useEffect(() => {
@@ -598,6 +600,12 @@ export function ResourceLibraryPanel({
           </div>
         )}
 
+        {activeSection === 'versions' && (
+          <div className="resource-review">
+            <FurnaceTimeline concept={selectedConcept} />
+          </div>
+        )}
+
         {resultText && (
           <div className="resource-result">
             <p className="resource-inspector-title">练习反馈</p>
@@ -623,6 +631,8 @@ export function ResourceLibraryPanel({
             </div>
           ))}
         </div>
+
+        <FurnaceTimeline concept={selectedConcept} />
 
         <div>
           <p className="resource-inspector-title">版本演进</p>
