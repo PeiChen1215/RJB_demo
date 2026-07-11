@@ -63,7 +63,7 @@ class StudentProfile(BaseModel):
     """学生画像"""
     knowledge_level: float = Field(1.0, ge=1.0, le=5.0, description="知识水平 1-5")
     cognitive_field: str = Field("dependent", description="场依存/场独立: dependent/independent")
-    cognitive_modality: str = Field("visual", description="视觉/听觉/动觉: visual/auditory/kinesthetic")
+    cognitive_modality: str = Field("visual", description="文字/视觉/听觉/动觉: text/visual/auditory/kinesthetic")
     learning_pace: str = Field("normal", description="学习节奏: slow/normal/fast")
     goal_orientation: str = Field("application", description="目标导向: exam/application/exploration")
     error_patterns: List[str] = Field(default_factory=list, description="常见错误模式")

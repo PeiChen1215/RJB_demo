@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { BookOpen, Loader2, Play, RefreshCw, Route, Send, Sparkles } from 'lucide-react'
+import { BookOpen, Ear, Eye, FileText, Loader2, Play, RefreshCw, Route, Send, Sparkles } from 'lucide-react'
 import type {
   ResourceDetail,
   ResourceEvolutionResponse,
@@ -11,6 +11,8 @@ import type {
 import { Panel, PanelHeader } from './Panel'
 import { cn } from '@/lib/utils'
 import type { CodeRunResult, ExerciseView } from './types'
+import { BilibiliVideoPlayer, TTSReader } from '@/components/resources/CognitiveStyleRenderer'
+import type { CognitiveStyle } from '@/components/resources/CognitiveStyleRenderer'
 
 function textFrom(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -206,6 +208,8 @@ export function ResourceLibraryPanel({
   onJudgeExercise,
   onSectionView,
   onSubmitFeedback,
+  styleMode = 'text',
+  onStyleChange,
 }: {
   selectedConcept: string
   resource: ResourceDetail | null
@@ -223,6 +227,8 @@ export function ResourceLibraryPanel({
   onJudgeExercise: (exercise: Record<string, any>, codeText: string) => Promise<any>
   onSectionView: (section: string) => void
   onSubmitFeedback?: (data: { rating?: number; confusion_marked?: boolean; error_report?: string }) => Promise<void>
+  styleMode?: CognitiveStyle
+  onStyleChange?: (mode: CognitiveStyle) => void
 }) {
   type ResourceSection = 'document' | 'mindmap' | 'exercise' | 'code' | 'audio' | 'review' | 'versions'
   const [activeSection, setActiveSection] = useState<ResourceSection>('document')
@@ -422,6 +428,51 @@ export function ResourceLibraryPanel({
 
         {!loading && hasResource && activeSection === 'document' && (
           <div className="resource-document">
+            {/* 认知风格切换器 */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1 rounded-xl border border-slate-600/40 bg-slate-800/60 p-1 backdrop-blur-sm">
+                {([
+                  { key: 'text' as CognitiveStyle, label: '文字型', icon: FileText, emoji: '📖' },
+                  { key: 'visual' as CognitiveStyle, label: '视觉型', icon: Eye, emoji: '👁' },
+                  { key: 'auditory' as CognitiveStyle, label: '听觉型', icon: Ear, emoji: '👂' },
+                ]).map((s) => {
+                  const Icon = s.icon
+                  const active = styleMode === s.key
+                  return (
+                    <button
+                      key={s.key}
+                      onClick={() => onStyleChange?.(s.key)}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all',
+                        active
+                          ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-md'
+                          : 'text-slate-400 hover:bg-slate-700/60 hover:text-slate-200'
+                      )}
+                      title={s.label}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">{s.emoji} {s.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              <span className="rounded-full border border-slate-600/40 px-2.5 py-0.5 text-[11px] font-semibold text-slate-400">
+                {styleMode === 'text' && '📖 纯文本阅读模式'}
+                {styleMode === 'visual' && '👁 视频讲解模式'}
+                {styleMode === 'auditory' && '👂 语音朗读模式'}
+              </span>
+            </div>
+
+            {/* 👁 视觉型：视频播放器 */}
+            {styleMode === 'visual' && (
+              <BilibiliVideoPlayer concept={selectedConcept} />
+            )}
+
+            {/* 👂 听觉型：TTS 朗读器 */}
+            {styleMode === 'auditory' && (
+              <TTSReader text={activeResource?.audio_text || activeResource?.document || ''} />
+            )}
+
             <RichLearningText title="智能讲义" content={activeResource?.document || '后端未返回讲义内容。'} />
           </div>
         )}

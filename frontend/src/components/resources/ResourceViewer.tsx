@@ -148,7 +148,7 @@ export function ResourceViewer({ sessionId }: Props) {
   const [progressMessage, setProgressMessage] = useState('')
   const [progressValue, setProgressValue] = useState(0)
   const [currentStage, setCurrentStage] = useState('builder')
-  const [cognitiveStyle, setCognitiveStyle] = useState<CognitiveStyle>('visual')
+  const [cognitiveStyle, setCognitiveStyle] = useState<CognitiveStyle>('text')
   const mindmapRef = useRef<HTMLDivElement>(null)
   const setSandboxCode = useSandboxStore((s) => s.setCode)
 
@@ -394,6 +394,7 @@ export function ResourceViewer({ sessionId }: Props) {
                     behaviorApi.log(sessionId || 'anonymous', 'resource_switched', resource.concept, { style })
                   }}
                   audioText={resource.package.audio_text}
+                  concept={resource.concept}
                 >
                   <article className="prose prose-sm max-w-none">
                     <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>

@@ -17,19 +17,20 @@ export function WorkspaceDock({
 }: {
   activeNav: NavKey
   selectedConcept: string
-  styleMode: 'visual' | 'auditory' | 'kinesthetic'
+  styleMode: 'text' | 'visual' | 'auditory' | 'kinesthetic'
   workspaceNote: string
   thinkingSteps: ThinkingStep[]
   versions: ResourceVersion[]
   learningPlan?: LearningPlanResponse | null
   learningEvents?: LearningEvent[]
-  onStyleChange: (mode: 'visual' | 'auditory' | 'kinesthetic') => void
+  onStyleChange: (mode: 'text' | 'visual' | 'auditory' | 'kinesthetic') => void
   onAnalyze: () => void
   onPlanPath: () => void
 }) {
   const styleCopy = {
-    visual: '视觉型：强化图谱、高亮路径和结构化卡片。',
-    auditory: '听觉型：突出对话引导和口语化讲解节奏。',
+    text: '文字型：纯讲义文本，适合安静阅读。',
+    visual: '视觉型：播放讲解视频 + 讲义，图文并茂。',
+    auditory: '听觉型：语音朗读讲解稿，适合听觉学习。',
     kinesthetic: '动觉型：强调代码练习、即时运行和操作反馈。',
   }
 
@@ -56,9 +57,9 @@ export function WorkspaceDock({
         <span>{workspaceNote}</span>
       </div>
       <div className="style-switcher">
-        {(['visual', 'auditory', 'kinesthetic'] as const).map((mode) => (
+        {(['text', 'visual', 'auditory'] as const).map((mode) => (
           <button key={mode} onClick={() => onStyleChange(mode)} className={cn(styleMode === mode && 'active')}>
-            {mode === 'visual' ? '视觉型' : mode === 'auditory' ? '听觉型' : '动觉型'}
+            {mode === 'text' ? '📖 文字型' : mode === 'visual' ? '👁 视觉型' : '👂 听觉型'}
           </button>
         ))}
         <span>{styleCopy[styleMode]}</span>
