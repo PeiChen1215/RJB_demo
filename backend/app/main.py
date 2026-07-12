@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, auth, code, evaluation, graph, learning_plan, resources, sessions
+from app.api import admin, assistant, auth, code, evaluation, graph, learning_plan, resources, sessions, tts
 from app.core.config import get_settings
 from app.middleware.logging import RequestLoggingMiddleware, setup_logging
 from app.services.database import get_db
@@ -84,6 +84,8 @@ app.include_router(code.router, prefix="/api/code", tags=["代码执行与判题
 app.include_router(evaluation.router, prefix="/api/evaluation", tags=["学习评估"])
 app.include_router(learning_plan.router, prefix="/api/learning-plan", tags=["学习规划"])
 app.include_router(admin.router, prefix="/api/admin", tags=["管理后台"])
+app.include_router(assistant.router, prefix="/api/assistant", tags=["数字人助教"])
+app.include_router(tts.router, prefix="/api/tts", tags=["语音合成"])
 
 
 @app.get("/health")

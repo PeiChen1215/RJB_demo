@@ -387,4 +387,16 @@ export const evaluationApi = {
     api.post(`/evaluation/analyze?session_id=${sessionId}`),
 }
 
+export const assistantApi = {
+  ask: (question: string) =>
+    api.post<{ answer: string }>('/assistant/ask', { question }),
+}
+
+export const ttsApi = {
+  synthesize: (text: string, speed?: number) =>
+    api.post('/tts/synthesize', { text, speed: speed ?? 50 }, { responseType: 'blob' }),
+  status: () =>
+    api.get<{ tts_available: boolean }>('/tts/status'),
+}
+
 export default api

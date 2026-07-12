@@ -239,7 +239,7 @@ async def patch_profile(session_id: str, payload: Dict[str, object], request: Re
         if key in allowed:
             profile[key] = value
 
-    if profile.get("cognitive_modality") not in {"visual", "auditory", "kinesthetic"}:
+    if profile.get("cognitive_modality") not in {"text", "visual", "auditory", "kinesthetic"}:
         profile["cognitive_modality"] = "visual"
 
     session["profile"] = profile

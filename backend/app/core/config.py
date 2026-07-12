@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     SPARK_TTS_APP_ID: str = ""
     SPARK_TTS_API_KEY: str = ""
     SPARK_TTS_API_SECRET: str = ""
+    SPARK_TTS_API_URL: str = "wss://cbm01.cn-huabei-1.xf-yun.com/v1/private/mcd9m97e6"
+    SPARK_TTS_API_PASSWORD: str = ""
 
     # 图存储后端: auto / neo4j / memory
     GRAPH_BACKEND: str = "auto"

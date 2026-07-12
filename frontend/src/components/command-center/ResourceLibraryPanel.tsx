@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { BookOpen, Loader2, Play, RefreshCw, Route, Send, Sparkles } from 'lucide-react'
+import { BookOpen, Ear, Eye, FileText, Loader2, Play, RefreshCw, Route, Send, Sparkles } from 'lucide-react'
 import type {
   ResourceDetail,
   ResourceEvolutionResponse,
@@ -10,7 +10,11 @@ import type {
 } from '@/services/api'
 import { Panel, PanelHeader } from './Panel'
 import { cn } from '@/lib/utils'
+import { FurnaceTimeline } from '@/components/resources/FurnaceTimeline'
 import type { CodeRunResult, ExerciseView } from './types'
+import { BilibiliVideoPlayer } from '@/components/resources/CognitiveStyleRenderer'
+import type { CognitiveStyle } from '@/components/resources/CognitiveStyleRenderer'
+import { DigitalHuman } from '@/components/digital-human/DigitalHuman'
 
 function textFrom(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -206,6 +210,8 @@ export function ResourceLibraryPanel({
   onJudgeExercise,
   onSectionView,
   onSubmitFeedback,
+  styleMode = 'text',
+  onStyleChange,
 }: {
   selectedConcept: string
   resource: ResourceDetail | null
@@ -223,6 +229,8 @@ export function ResourceLibraryPanel({
   onJudgeExercise: (exercise: Record<string, any>, codeText: string) => Promise<any>
   onSectionView: (section: string) => void
   onSubmitFeedback?: (data: { rating?: number; confusion_marked?: boolean; error_report?: string }) => Promise<void>
+  styleMode?: CognitiveStyle
+  onStyleChange?: (mode: CognitiveStyle) => void
 }) {
   type ResourceSection = 'document' | 'mindmap' | 'exercise' | 'code' | 'audio' | 'review' | 'versions'
   const [activeSection, setActiveSection] = useState<ResourceSection>('document')
@@ -413,15 +421,56 @@ export function ResourceLibraryPanel({
         )}
 
         {!loading && !hasResource && (
-          <div className="resource-empty-state">
+          <div className="resource-empty-state flex flex-col items-center gap-4">
             <Sparkles className="h-5 w-5 text-amber-300" />
             <strong>当前知识点还没有资源包</strong>
-            <span>点击“重新生成”会调用后端资源生成流，并在完成后自动展示。</span>
+            <span>点击「重新生成」会调用后端资源生成流，并在完成后自动展示。</span>
+            {/* 数字人预览：即使没资源也能看到 */}
+            <div className="mt-4 w-full max-w-sm rounded-2xl border border-amber-200/60 bg-amber-50/30 p-4">
+              <p className="mb-3 text-center text-xs font-bold text-amber-700">数字人教师预览</p>
+              <DigitalHuman text="你好！我是智学蜂巢的数字人教师。生成学习资源后，我会为你朗读讲解内容。" concept={selectedConcept} />
+            </div>
           </div>
         )}
 
         {!loading && hasResource && activeSection === 'document' && (
           <div className="resource-document">
+            {/* 认知风格切换器 */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1 rounded-xl border border-slate-600/40 bg-slate-800/60 p-1 backdrop-blur-sm">
+                {([
+                  { key: 'text' as CognitiveStyle, label: '文字型', icon: FileText, emoji: '📖' },
+                  { key: 'visual' as CognitiveStyle, label: '视觉型', icon: Eye, emoji: '👁' },
+                  { key: 'auditory' as CognitiveStyle, label: '听觉型', icon: Ear, emoji: '👂' },
+                ]).map((s) => {
+                  const Icon = s.icon
+                  const active = styleMode === s.key
+                  return (
+                    <button key={s.key} onClick={() => onStyleChange?.(s.key)}
+                      className={cn('flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all',
+                        active ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-700/60 hover:text-slate-200')}
+                      title={s.label}>
+                      <Icon className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">{s.emoji} {s.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              <span className="rounded-full border border-slate-600/40 px-2.5 py-0.5 text-[11px] font-semibold text-slate-400">
+                {styleMode === 'text' && '📖 纯文本阅读模式'}
+                {styleMode === 'visual' && '👁 视频讲解模式'}
+                {styleMode === 'auditory' && '👂 语音朗读模式'}
+              </span>
+            </div>
+
+            {/* 👁 视觉型：视频播放器 */}
+            {styleMode === 'visual' && <BilibiliVideoPlayer concept={selectedConcept} />}
+
+            {/* 👂 听觉型：数字人朗读 */}
+            {styleMode === 'auditory' && (
+              <DigitalHuman text={activeResource?.audio_text || activeResource?.document || ''} concept={selectedConcept} />
+            )}
+
             <RichLearningText title="智能讲义" content={activeResource?.document || '后端未返回讲义内容。'} />
           </div>
         )}
@@ -525,7 +574,10 @@ export function ResourceLibraryPanel({
 
         {!loading && hasResource && activeSection === 'audio' && (
           <div className="resource-document">
-            <RichLearningText title="听觉讲解稿" content={activeResource?.audio_text || '后端未返回听觉讲解稿。'} tone="audio" />
+            <DigitalHuman
+              text={activeResource?.audio_text || activeResource?.document || '请先生成学习资源，即可听取数字人讲解。'}
+              concept={selectedConcept}
+            />
           </div>
         )}
 
@@ -594,7 +646,7 @@ export function ResourceLibraryPanel({
           ) : (
             <div className="version-card muted">
               <strong>待生成</strong>
-              <span>点击“重新生成”后，这里会显示最新资源版本。</span>
+              <span>点击"重新生成"后，这里会显示最新资源版本。</span>
               <em>resources/versions</em>
             </div>
           )}
