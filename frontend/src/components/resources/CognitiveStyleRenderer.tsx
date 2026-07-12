@@ -140,6 +140,7 @@ export function TTSReader({ text }: { text: string }) {
     if (paused) { synth.resume(); setPaused(false); setSpeaking(true); return }
     synth.cancel()
     if (!text) return
+
     const utter = new SpeechSynthesisUtterance(text)
     utter.lang = 'zh-CN'; utter.rate = rate; utter.pitch = 1; utter.volume = 1
     const voices = synth.getVoices()
@@ -213,6 +214,13 @@ export function CognitiveStylePanel({
       <div className={cn('transition-opacity', currentStyle === 'auditory' ? 'opacity-90' : 'opacity-100')}>
         {children}
       </div>
+
+      {/* 📖 文字型底部提示 */}
+      {currentStyle === 'text' && (
+        <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50/60 p-2 text-center text-[11px] text-slate-400">
+          当前为纯文本阅读模式 · 可切换至视觉型观看视频或听觉型听语音讲解
+        </div>
+      )}
     </div>
   )
 }

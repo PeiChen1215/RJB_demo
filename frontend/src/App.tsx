@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import { motion, useMotionValue } from 'framer-motion'
+import { KnowledgeGraph as EChartsKnowledgeGraph } from '@/components/graph/KnowledgeGraph'
 import {
   BarChart3,
   BookOpen,
@@ -606,6 +607,7 @@ function App() {
   const [resourceConcept, setResourceConcept] = useState(targetConcept)
   const [plannedPath, setPlannedPath] = useState<string[]>(['变量基础', '条件判断', '循环结构', '函数封装', targetConcept])
   const [showGraphDetail, setShowGraphDetail] = useState(true)
+  const [graphView, setGraphView] = useState<'path' | 'structure'>('path')
   const [graphFocusNonce, setGraphFocusNonce] = useState(0)
   const [selectedHeatCell, setSelectedHeatCell] = useState<SelectedHeatCell | null>(null)
   const [bktDetail, setBktDetail] = useState<any | null>(null)
@@ -627,6 +629,24 @@ function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     createChatMessage('assistant', `你已经掌握了前置知识，接下来我们学习「${targetConcept}」。你可以直接提问，我会结合学习画像、知识图谱和练习记录进行辅导。`, 'Socrates'),
   ])
+  // 当学生切换知识点时，同步更新对话区的欢迎语与当前目标
+  useEffect(() => {
+    setChatMessages((prev) => {
+      if (prev.length === 0) return prev
+      const first = prev[0]
+      if (first.role === 'assistant' && first.agentName === 'Socrates') {
+        return [
+          {
+            ...first,
+            content: `你已经掌握了前置知识，接下来我们学习「${selectedConcept}」。你可以直接提问，我会结合学习画像、知识图谱和练习记录进行辅导。`,
+          },
+          ...prev.slice(1),
+        ]
+      }
+      return prev
+    })
+  }, [selectedConcept])
+
   const [chatLoading, setChatLoading] = useState(false)
   const [code, setCode] = useState(SAMPLE_CODE)
   const [codeOutput, setCodeOutput] = useState(SAMPLE_OUTPUT)
@@ -779,8 +799,23 @@ function App() {
 
     async function bootstrap() {
       try {
-        const [sessionRes, graphRes, layoutRes, healthRes] = await Promise.all([
-          sessionApi.create(targetConcept),
+        // 复用已有会话或创建新会话
+        const savedSessionId = window.localStorage.getItem('eduhive.session_id')
+        let sessionRes
+        if (savedSessionId) {
+          try {
+            sessionRes = await sessionApi.getSession(savedSessionId)
+            if (!sessionRes.data?.session_id) throw new Error('stale')
+          } catch {
+            window.localStorage.removeItem('eduhive.session_id')
+            sessionRes = await sessionApi.create(targetConcept)
+          }
+        } else {
+          sessionRes = await sessionApi.create(targetConcept)
+        }
+        window.localStorage.setItem('eduhive.session_id', sessionRes.data.session_id)
+
+        const [graphRes, layoutRes, healthRes] = await Promise.all([
           graphApi.getGraph(),
           graphApi.getLayout().catch(() => null),
           fetch('/health/detail').then((res) => res.json()).catch(() => null),
@@ -789,14 +824,12 @@ function App() {
         if (cancelled) return
         const nextTarget = sessionRes.data.target_concept || targetConcept
         const validTargets = new Set(graphRes.data.nodes.map((n) => n.name))
-        const targetNode = graphRes.data.nodes.find((n) => n.name === nextTarget)
-        const isBeginnerTarget = targetNode && ((targetNode.module && targetNode.module.includes('基础')) || targetNode.difficulty <= 2)
         const fallbackTarget = (() => {
-          const basics = graphRes.data.nodes.filter((n) => (n.module && n.module.includes('基础')) || n.difficulty <= 2)
-          const sorted = basics.length ? basics.sort((a, b) => a.difficulty - b.difficulty) : graphRes.data.nodes.sort((a, b) => a.difficulty - b.difficulty)
+          const basics = graphRes.data.nodes.filter((n) => (n.module && n.module.includes('基础')) || (typeof n.difficulty === 'number' && n.difficulty <= 2))
+          const sorted = basics.length ? [...basics].sort((a, b) => (a.difficulty ?? 99) - (b.difficulty ?? 99)) : [...graphRes.data.nodes].sort((a, b) => (a.difficulty ?? 99) - (b.difficulty ?? 99))
           return sorted[0]?.name || nextTarget
         })()
-        const finalTarget = validTargets.has(nextTarget) && isBeginnerTarget ? nextTarget : fallbackTarget
+        const finalTarget = validTargets.has(nextTarget) ? nextTarget : fallbackTarget
         window.localStorage.setItem('eduhive.target_concept', finalTarget)
         setTargetConcept(finalTarget)
         setSelectedConcept(finalTarget)
@@ -917,7 +950,7 @@ function App() {
     return merged
   }, [personalPath, graphLayout, graph])
 
-  const masteredCount = pathNodes.filter((node) => node.mastery >= 80).length
+  const masteredCount = session?.profile.mastered_concepts?.length ?? pathNodes.filter((node) => node.mastery >= 80).length
   const selectedNode = pathNodes.find((node) => node.id === selectedNodeId || node.title === selectedConcept) ?? pathNodes[pathNodes.length - 1]
   const learningGoalConcept = plannedPath[plannedPath.length - 1] || selectedConcept
   const averageMastery = selectedNode?.mastery ?? Math.round(
@@ -972,6 +1005,9 @@ function App() {
         || (Array.isArray(res.data.path) ? res.data.path : [])
       if (!nextPath.length) throw new Error('empty path')
       setPlannedPath(nextPath)
+      // 聚焦到目标节点，让路径高亮自动进入视图中心
+      setSelectedNodeId(selectedConcept)
+      setGraphFocusNonce((value) => value + 1)
       setWorkspaceNote(`后端知识图谱已生成路径：${nextPath.join(' → ')}`)
     } catch {
       setWorkspaceNote('路径接口暂不可用，已保留当前可视化路径。')
@@ -1407,8 +1443,7 @@ function App() {
   }
 
   return (
-    <div className={cn('command-shell min-h-screen text-slate-100', `style-mode-${styleMode}`)}>
-      <HexBackdrop />
+    <div className={cn('command-shell min-h-screen', `style-mode-${styleMode}`)}>
       <aside className="command-sidebar">
         <BrandBlock />
         <button type="button" onClick={openPortal} className="course-back-link">
@@ -1564,7 +1599,7 @@ function App() {
                   setInput={setChatInput}
                   messages={chatMessages}
                   loading={chatLoading}
-                  targetConcept={targetConcept}
+                  targetConcept={selectedConcept}
                   onSend={sendChat}
                   onContinueTutor={() => sendChat('请继续用苏格拉底式提问引导我，不要直接给答案。')}
                 />
@@ -1973,16 +2008,6 @@ function CourseStudyHeader({
   )
 }
 
-function HexBackdrop() {
-  return (
-    <div aria-hidden="true" className="pointer-events-none fixed inset-0 overflow-hidden">
-      <div className="command-bg-layer absolute inset-0" />
-      <div className="absolute inset-0 opacity-[0.10] [background-image:linear-gradient(30deg,rgba(255,190,82,.25)_12%,transparent_12.5%,transparent_87%,rgba(255,190,82,.25)_87.5%,rgba(255,190,82,.25)),linear-gradient(150deg,rgba(255,190,82,.25)_12%,transparent_12.5%,transparent_87%,rgba(255,190,82,.25)_87.5%,rgba(255,190,82,.25)),linear-gradient(30deg,rgba(255,190,82,.25)_12%,transparent_12.5%,transparent_87%,rgba(255,190,82,.25)_87.5%,rgba(255,190,82,.25)),linear-gradient(150deg,rgba(255,190,82,.25)_12%,transparent_12.5%,transparent_87%,rgba(255,190,82,.25)_87.5%,rgba(255,190,82,.25))] [background-position:0_0,0_0,18px_31px,18px_31px] [background-size:36px_62px]" />
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.035)_1px,transparent_1px)] bg-[size:40px_40px]" />
-    </div>
-  )
-}
-
 function BrandBlock() {
   return (
     <div className="flex items-center gap-4">
@@ -2007,6 +2032,7 @@ function KnowledgePanel({
   conceptDetail,
   showDetail,
   focusNonce,
+  onSwitchToStructure,
   onNodeSelect,
   onCanvasBlankClick,
   onPlanPath,
@@ -2023,6 +2049,7 @@ function KnowledgePanel({
   conceptDetail: any | null
   showDetail: boolean
   focusNonce: number
+  onSwitchToStructure?: () => void
   onNodeSelect: (node: PathNode) => void
   onCanvasBlankClick: () => void
   onPlanPath: () => void
@@ -2092,14 +2119,23 @@ function KnowledgePanel({
         title="知识图谱 / 学习路径"
         icon={Network}
         meta={
-          <div className="flex flex-wrap gap-4 text-xs">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            {onSwitchToStructure && <button type="button" onClick={onSwitchToStructure} className="rounded-full px-2 py-0.5 border border-white/10 text-slate-500 hover:text-amber-300 hover:border-amber-500/30 transition">力导向结构 →</button>}
+            <span className="text-slate-600">|</span>
             <LegendDot color="mint" label="已掌握" />
             <LegendDot color="amber" label="学习中" />
             <LegendDot color="gray" label="待学习" />
-            <span className="text-slate-500">--- 前置依赖</span>
           </div>
         }
       />
+
+      {plannedPath.length > 1 && (
+        <div className="absolute left-3 right-3 top-[54px] z-20 flex items-center gap-2 rounded-b-md border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 backdrop-blur-sm">
+          <Route className="h-3.5 w-3.5" />
+          <span className="font-medium">已规划路径：</span>
+          <span className="truncate">{plannedPath.join(' → ')}</span>
+        </div>
+      )}
 
       <div
         ref={canvasRef}

@@ -394,6 +394,7 @@ export function ResourceViewer({ sessionId }: Props) {
                     behaviorApi.log(sessionId || 'anonymous', 'resource_switched', resource.concept, { style })
                   }}
                   audioText={resource.package.audio_text}
+                  concept={resource.concept}
                 >
                   <article className="prose prose-sm max-w-none">
                     <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
