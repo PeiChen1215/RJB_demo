@@ -52,6 +52,7 @@ import {
   type ThinkingStep,
 } from '@/services/api'
 import { SocraticPanel } from '@/components/socratic/SocraticPanel'
+import { FloatingAssistant } from '@/components/digital-human/FloatingAssistant'
 import { cn } from '@/lib/utils'
 import {
   AgentPanel,
@@ -1680,6 +1681,7 @@ function App() {
           </section>
         </div>
       </main>
+      <FloatingAssistant activeNav={activeNav} selectedConcept={selectedConcept} />
     </div>
   )
 }

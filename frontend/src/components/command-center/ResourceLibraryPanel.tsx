@@ -12,8 +12,9 @@ import { Panel, PanelHeader } from './Panel'
 import { cn } from '@/lib/utils'
 import { FurnaceTimeline } from '@/components/resources/FurnaceTimeline'
 import type { CodeRunResult, ExerciseView } from './types'
-import { BilibiliVideoPlayer, TTSReader } from '@/components/resources/CognitiveStyleRenderer'
+import { BilibiliVideoPlayer } from '@/components/resources/CognitiveStyleRenderer'
 import type { CognitiveStyle } from '@/components/resources/CognitiveStyleRenderer'
+import { DigitalHuman } from '@/components/digital-human/DigitalHuman'
 
 function textFrom(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -421,10 +422,15 @@ export function ResourceLibraryPanel({
         )}
 
         {!loading && !hasResource && (
-          <div className="resource-empty-state">
+          <div className="resource-empty-state flex flex-col items-center gap-4">
             <Sparkles className="h-5 w-5 text-amber-300" />
             <strong>当前知识点还没有资源包</strong>
-            <span>点击“重新生成”会调用后端资源生成流，并在完成后自动展示。</span>
+            <span>点击「重新生成」会调用后端资源生成流，并在完成后自动展示。</span>
+            {/* 数字人预览：即使没资源也能看到 */}
+            <div className="mt-4 w-full max-w-sm rounded-2xl border border-amber-200/60 bg-amber-50/30 p-4">
+              <p className="mb-3 text-center text-xs font-bold text-amber-700">数字人教师预览</p>
+              <DigitalHuman text="你好！我是智学蜂巢的数字人教师。生成学习资源后，我会为你朗读讲解内容。" concept={selectedConcept} />
+            </div>
           </div>
         )}
 
@@ -441,17 +447,10 @@ export function ResourceLibraryPanel({
                   const Icon = s.icon
                   const active = styleMode === s.key
                   return (
-                    <button
-                      key={s.key}
-                      onClick={() => onStyleChange?.(s.key)}
-                      className={cn(
-                        'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all',
-                        active
-                          ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-md'
-                          : 'text-slate-400 hover:bg-slate-700/60 hover:text-slate-200'
-                      )}
-                      title={s.label}
-                    >
+                    <button key={s.key} onClick={() => onStyleChange?.(s.key)}
+                      className={cn('flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all',
+                        active ? 'bg-gradient-to-r from-indigo-500 to-violet-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-700/60 hover:text-slate-200')}
+                      title={s.label}>
                       <Icon className="h-3.5 w-3.5" />
                       <span className="hidden sm:inline">{s.emoji} {s.label}</span>
                     </button>
@@ -466,13 +465,11 @@ export function ResourceLibraryPanel({
             </div>
 
             {/* 👁 视觉型：视频播放器 */}
-            {styleMode === 'visual' && (
-              <BilibiliVideoPlayer concept={selectedConcept} />
-            )}
+            {styleMode === 'visual' && <BilibiliVideoPlayer concept={selectedConcept} />}
 
-            {/* 👂 听觉型：TTS 朗读器 */}
+            {/* 👂 听觉型：数字人朗读 */}
             {styleMode === 'auditory' && (
-              <TTSReader text={activeResource?.audio_text || activeResource?.document || ''} />
+              <DigitalHuman text={activeResource?.audio_text || activeResource?.document || ''} concept={selectedConcept} />
             )}
 
             <RichLearningText title="智能讲义" content={activeResource?.document || '后端未返回讲义内容。'} />
@@ -578,7 +575,10 @@ export function ResourceLibraryPanel({
 
         {!loading && hasResource && activeSection === 'audio' && (
           <div className="resource-document">
-            <RichLearningText title="听觉讲解稿" content={activeResource?.audio_text || '后端未返回听觉讲解稿。'} tone="audio" />
+            <DigitalHuman
+              text={activeResource?.audio_text || activeResource?.document || '请先生成学习资源，即可听取数字人讲解。'}
+              concept={selectedConcept}
+            />
           </div>
         )}
 
@@ -655,7 +655,7 @@ export function ResourceLibraryPanel({
           ) : (
             <div className="version-card muted">
               <strong>待生成</strong>
-              <span>点击“重新生成”后，这里会显示最新资源版本。</span>
+              <span>点击"重新生成"后，这里会显示最新资源版本。</span>
               <em>resources/versions</em>
             </div>
           )}
